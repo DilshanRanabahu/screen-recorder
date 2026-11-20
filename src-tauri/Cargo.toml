@@ -1,0 +1,23 @@
+[package]
+name = "screen-recorder"
+description = "High-quality, low-lag screen recorder for Windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2.7.6", features = [] }
+
+[dependencies]
+recorder-core.workspace = true
+tauri = { version = "2.12.7", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2.4.1"
+tauri-plugin-single-instance = "2.5.5"
+window-vibrancy = "0.8.1"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+anyhow.workspace = true
+dirs.workspace = true

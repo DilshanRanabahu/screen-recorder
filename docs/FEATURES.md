@@ -1,0 +1,78 @@
+# Features and Roadmap
+
+## Phase 0: Project setup (Rust + Tauri)
+
+- [x] Cargo workspace with `crates/recorder-core` (engine) and `src-tauri` (app)
+- [x] Tauri 2 app with a Svelte + TypeScript frontend and Tailwind CSS
+- [x] Tray icon and global hotkey (Ctrl+Alt+R), wired to real start/stop recording
+- [x] `tracing` logging to `%APPDATA%\ScreenRecorder\logs`
+- [x] Engine smoke test: record 5 seconds of the primary monitor to MP4 from a CLI example (`cargo run --example record`)
+- [ ] CI: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, frontend build
+
+## Phase 1: MVP
+
+The minimum needed to replace other recorders for daily work.
+
+### Capture
+- [x] Full screen (choose a monitor)
+- [ ] Single window (follows the window as it moves)
+- [ ] Custom region (drag to select, with the size shown while dragging)
+- [x] Cursor included (option to hide it exists in the engine, not yet in the UI)
+
+### Audio
+- [x] System audio (WASAPI loopback)
+- [x] Microphone, with device picker
+- [x] Separate tracks for system audio and microphone
+- [x] Live level meters during recording
+- [ ] Level meters *before* recording (to test the mic)
+
+### Controls
+- [x] Global hotkeys: start/stop (Ctrl+Alt+R), pause/resume (Ctrl+Alt+P)
+- [ ] Configurable hotkeys
+- [x] System tray icon with a quick menu (grey idle, red recording, amber paused)
+- [ ] 3-second countdown (optional)
+- [x] Recording timer, shown in a small floating widget that is excluded from the capture
+- [x] Pause / resume with no gap in the file
+
+### Output
+- [x] Hardware encoding via Media Foundation (uses QuickSync on the dev laptop)
+- [x] Clear error at start if the encoder can't be created
+- [ ] Software-encoding fallback at a lower frame rate
+- [x] Quality presets: *Standard*, *High*, *Maximum* (see [RECORDING-SETTINGS.md](RECORDING-SETTINGS.md))
+- [x] Constant frame rate output, in sync with audio
+- [x] Crash-safe recording (fragmented MP4, written directly; no remux needed)
+- [x] Automatic file naming: `Recording_2026-11-20_14-32-05.mp4`
+- [ ] Configurable output folder (fixed to `Videos\Recordings` for now; "Open folder" works)
+- [ ] Settings saved between app restarts
+
+## Phase 2: Productivity
+
+- [ ] **Click visualization**: a ripple effect on mouse clicks
+- [ ] **Cursor highlight**: a soft circle around the pointer
+- [ ] **Keystroke overlay**: shows shortcuts pressed, useful for tutorials
+- [ ] **Webcam overlay**: picture-in-picture, movable, round or rectangular
+- [ ] **Instant replay buffer**: always keeps the last N minutes in memory, saved with a hotkey
+- [ ] **Quick trim editor**: cut start and end without re-encoding (no quality loss)
+- [ ] **Recording history**: a list of recent recordings with thumbnails
+- [ ] **Screenshot** hotkey (PNG, same region tools)
+
+## Phase 3: Polish
+
+- [ ] On-screen drawing and annotations while recording (pen, arrow, box, highlight)
+- [ ] Zoom-to-cursor or smooth auto-zoom on clicks
+- [ ] Microphone noise suppression (RNNoise) and auto gain
+- [ ] Blur or redact regions (for passwords and private data)
+- [ ] Scheduled or timed recordings (stop after N minutes)
+- [ ] Auto-split long recordings by size or time
+- [ ] Export presets: GIF, compressed "share" MP4, audio-only
+- [ ] Optional upload or copy-to-clipboard after recording
+
+## Settings screen (planned layout)
+
+| Section | Options |
+|---|---|
+| General | Output folder, file name pattern, start with Windows, countdown |
+| Video | Encoder, codec, quality preset, fps, resolution (native/scaled) |
+| Audio | System device, mic device, separate tracks, noise suppression |
+| Hotkeys | Start/stop, pause, screenshot, save replay |
+| Overlays | Cursor, clicks, keystrokes, webcam |
