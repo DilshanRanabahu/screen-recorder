@@ -37,3 +37,15 @@ pub fn list_displays() -> Result<Vec<Display>, RecorderError> {
         })
         .collect())
 }
+
+
+/// Free bytes on the drive that holds `path` (the path may not exist yet).
+pub fn free_space(path: &std::path::Path) -> Option<u64> {
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    use windows::core::HSTRING;
+
+    let existing = path.ancestors().find(|p| p.exists())?;
+    let mut free = 0u64;
+    unsafe { GetDiskFreeSpaceExW(&HSTRING::from(existing.as_os_str()), Some(&mut free), None, None) }.ok()?;
+    Some(free)
+}

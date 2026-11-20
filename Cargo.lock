@@ -2011,6 +2011,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpeg-encoder"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0370574b86f7eca156b9f298392b5e69a23f8c86f3f865add60bbc2e79467a6"
+
+[[package]]
 name = "js-sys"
 version = "0.3.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2964,6 +2970,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs",
+ "jpeg-encoder",
  "serde",
  "thiserror 2.0.21",
  "tracing",
@@ -3191,7 +3198,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "window-vibrancy",
 ]
 
 [[package]]

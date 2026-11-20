@@ -24,9 +24,12 @@ The minimum needed to replace other recorders for daily work.
 - [x] Microphone, with device picker
 - [x] Separate tracks for system audio and microphone
 - [x] Live level meters during recording
-- [ ] Level meters *before* recording (to test the mic)
+- [x] Level meters *before* recording (mic check)
 
 ### Controls
+- [x] Studio window: live preview, audio mixer, quality cards, recent recordings, disk-space estimate
+- [x] Compact always-on-top pill while recording (expand back to the studio any time)
+- [x] "Recording saved" toast with Play / Show in folder
 - [x] Global hotkeys: start/stop (Ctrl+Alt+R), pause/resume (Ctrl+Alt+P)
 - [ ] Configurable hotkeys
 - [x] System tray icon with a quick menu (grey idle, red recording, amber paused)
@@ -53,7 +56,7 @@ The minimum needed to replace other recorders for daily work.
 - [ ] **Webcam overlay**: picture-in-picture, movable, round or rectangular
 - [ ] **Instant replay buffer**: always keeps the last N minutes in memory, saved with a hotkey
 - [ ] **Quick trim editor**: cut start and end without re-encoding (no quality loss)
-- [ ] **Recording history**: a list of recent recordings with thumbnails
+- [x] **Recording history**: recent recordings list in the studio (no thumbnails yet)
 - [ ] **Screenshot** hotkey (PNG, same region tools)
 
 ## Phase 3: Polish

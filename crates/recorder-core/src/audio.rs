@@ -107,6 +107,7 @@ fn spawn_capture(
     track: AudioTrack,
     device_id: Option<String>,
     stop: Arc<AtomicBool>,
+    levels: Arc<Levels>,
 ) -> Result<(JoinHandle<()>, Receiver<Vec<f32>>), RecorderError> {
     let (tx, rx) = mpsc::sync_channel::<Vec<f32>>(256);
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
@@ -114,7 +115,7 @@ fn spawn_capture(
     let handle = std::thread::Builder::new()
         .name(format!("audio-{track:?}").to_lowercase())
         .spawn(move || {
-            if let Err(e) = capture_loop(track, device_id, &stop, &tx, &ready_tx) {
+            if let Err(e) = capture_loop(track, device_id, &stop, &levels, &tx, &ready_tx) {
                 // If `ready` was already sent, this is a runtime failure.
                 if ready_tx.send(Err(e.clone())).is_err() {
                     warn!(?track, error = %e, "audio capture stopped");
@@ -134,6 +135,7 @@ fn capture_loop(
     track: AudioTrack,
     device_id: Option<String>,
     stop: &AtomicBool,
+    levels: &Levels,
     tx: &SyncSender<Vec<f32>>,
     ready: &mpsc::Sender<Result<(), String>>,
 ) -> Result<(), String> {
@@ -178,6 +180,8 @@ fn capture_loop(
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         bytes.clear();
+        let peak = samples.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        levels.raise(track, peak.min(1.0));
         match tx.try_send(samples) {
             Ok(()) | Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => break,
@@ -252,7 +256,7 @@ impl AudioPipeline {
             if !on {
                 continue;
             }
-            match spawn_capture(track, id, Arc::clone(&stop)) {
+            match spawn_capture(track, id, Arc::clone(&stop), Arc::clone(&levels)) {
                 Ok((handle, rx)) => {
                     threads.push(handle);
                     sources.push(Source { track, rx, buf: VecDeque::new() });
@@ -271,10 +275,9 @@ impl AudioPipeline {
 
         if !sources.is_empty() {
             let pacer_stop = Arc::clone(&stop);
-            let pacer_levels = Arc::clone(&levels);
             let pacer = std::thread::Builder::new()
                 .name("audio-pacer".into())
-                .spawn(move || pace_loop(sources, &clock, &pacer_stop, &pacer_levels, sink))
+                .spawn(move || pace_loop(sources, &clock, &pacer_stop, sink))
                 .map_err(|e| RecorderError::Audio(e.to_string()))?;
             threads.push(pacer);
         }
@@ -309,7 +312,6 @@ fn pace_loop(
     mut sources: Vec<Source>,
     clock: &MediaClock,
     stop: &AtomicBool,
-    levels: &Levels,
     mut sink: impl FnMut(AudioTrack, &[u8], i64) -> bool,
 ) {
     let mut produced: u64 = 0; // frames (one sample per channel), same for every track
@@ -352,22 +354,42 @@ fn pace_loop(
 
         for s in &mut sources {
             let take = n.min(s.buf.len());
-            let mut peak = 0.0f32;
             out.clear();
             out.reserve(n * 2);
             for v in s.buf.drain(..take) {
-                peak = peak.max(v.abs());
                 let i = (v.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16;
                 out.extend_from_slice(&i.to_le_bytes());
             }
             // Silence for whatever the device didn't deliver.
             out.resize(n * 2, 0);
-            levels.raise(s.track, peak.min(1.0));
             if !sink(s.track, &out, time) {
                 debug!("audio sink closed");
                 return;
             }
         }
         produced += frames as u64;
+    }
+}
+
+/// Opens audio devices only to show level meters (no recording). Used before
+/// recording so you can check the microphone. Dropping it closes the devices.
+pub struct AudioMeter {
+    pipeline: AudioPipeline,
+}
+
+impl AudioMeter {
+    pub fn start(config: &AudioConfig) -> Result<Self, RecorderError> {
+        // A clock that never starts: samples are buffered (bounded) and discarded.
+        let pipeline = AudioPipeline::start(config, Arc::new(MediaClock::default()), |_, _, _| true)?;
+        Ok(Self { pipeline })
+    }
+
+    /// Returns (system, microphone) peaks since the last call, 0.0–1.0.
+    pub fn levels(&self) -> (f32, f32) {
+        self.pipeline.levels.take()
+    }
+
+    pub fn warnings(&self) -> &[String] {
+        &self.pipeline.warnings
     }
 }

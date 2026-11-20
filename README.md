@@ -44,18 +44,19 @@ What works:
 - **System audio and microphone** (device picker), each as its own AAC track, in sync with video (≈40 ms measured)
 - **Pause/resume** (button or **Ctrl+Alt+P**) with no gap in the file
 - **Crash-safe** fragmented MP4: a killed recording still plays
-- Launcher window, compact timer/pause/stop window with level meters while recording; app windows are excluded from recordings
+- **Studio UI** (dark, OBS-style layout): smooth GPU-scaled live preview (up to 30 fps), audio mixer with dB meters (also before recording), quality cards, recent recordings, disk space and GB/hour estimate, toasts
+- Compact always-on-top **pill** while recording; the app's windows never appear in recordings
 - Tray icon (grey idle, red recording, amber paused) and **Ctrl+Alt+R** start/stop
 - Logs in `%APPDATA%\ScreenRecorder\logs`; recordings in `Videos\Recordings`
 
-Still to do in Phase 1 (see [docs/FEATURES.md](docs/FEATURES.md)): window and region capture, post-recording thumbnail, settings window and saved preferences, countdown, mic test meter before recording. Known issues are listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#known-issues).
+Still to do in Phase 1 (see [docs/FEATURES.md](docs/FEATURES.md)): window and region capture, settings window and saved preferences, countdown. UI details: [docs/UI-DESIGN.md](docs/UI-DESIGN.md). Known issues are listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#known-issues).
 
 ## Project layout
 
 ```
 crates/recorder-core/   Recording engine (no UI). examples/record.rs = CLI smoke test
 src-tauri/              Tauri app: commands, state, tray, hotkey, logging
-src/                    Svelte frontend (App.svelte, lib/api.ts, app.css)
+src/                    Svelte frontend (App.svelte, components/, lib/api.ts, app.css)
 docs/                   Design docs
 ```
 
@@ -73,3 +74,5 @@ cargo run --release -p recorder-core --example record -- 5 high
 ```
 
 The first build takes about 15–20 minutes on the dev laptop; later builds are incremental.
+
+The app window hides itself from all screen captures. To take UI screenshots, start it with `SR_SHOW_IN_CAPTURE=1` set (it will then also appear in recordings and the preview).

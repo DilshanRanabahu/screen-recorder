@@ -34,25 +34,37 @@ fn main() {
             commands::list_displays,
             commands::list_microphones,
             commands::get_levels,
+            commands::set_monitoring,
+            commands::start_preview,
+            commands::stop_preview,
+            commands::preview_ack,
+            commands::set_preview_fps,
+            commands::list_recordings,
+            commands::storage_free,
             commands::get_state,
             commands::get_selection,
             commands::set_selection,
             commands::start_recording,
             commands::stop_recording,
             commands::toggle_pause,
+            commands::get_view,
+            commands::set_view,
             commands::open_path,
             commands::open_recordings_folder,
             commands::hide_window,
+            commands::minimize_window,
+            commands::toggle_maximize,
         ])
         .setup(|app| {
             let handle = app.handle();
 
             if let Some(window) = app.get_webview_window("main") {
-                let mica = window_vibrancy::apply_mica(&window, None).is_ok();
-                if !mica {
-                    tracing::warn!("Mica backdrop unavailable; using a solid background");
+                // Developer aid: make the window visible to screenshots/recordings.
+                if std::env::var_os("SR_SHOW_IN_CAPTURE").is_some() {
+                    tracing::warn!("SR_SHOW_IN_CAPTURE set: the app window will appear in captures");
+                    window.set_content_protected(false)?;
                 }
-                app.state::<AppState>().set_mica(mica);
+                state::set_view(handle, state::View::Studio);
                 window.show()?;
             }
 

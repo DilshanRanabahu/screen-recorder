@@ -116,6 +116,7 @@ The engine lives in `crates/recorder-core/src`:
 | `video.rs` | `FrameRing` (8 GPU textures) + video pacer thread: submits the latest frame every 1/fps, repeating it while the screen is static → constant frame rate | `windows` (D3D11) |
 | `writer.rs` | Media Foundation **sink writer**: BGRA textures in, GPU colour conversion + hardware H.264/HEVC, one AAC track per audio source, **fragmented MP4** | `windows` (Media Foundation) |
 | `audio.rs` | WASAPI capture per source + audio pacer thread: emits exactly the samples due on the media clock, silence-filled | `wasapi` |
+| `preview.rs` | Live preview: separate WGC session → GPU mipmap downscale → small readback; JPEG (WIC) on its own encoder thread → callback | `windows` (D3D11, WIC), `jpeg-encoder` (fallback) |
 | `display.rs`, `options.rs` | Monitor list, presets, file naming | `windows-capture` |
 
 Screen capture uses `windows-capture` (Windows.Graphics.Capture) only to receive frames; its built-in encoder is **not** used. That encoder ignores the gaps between frames, so video drifted ahead of audio whenever the screen was static.

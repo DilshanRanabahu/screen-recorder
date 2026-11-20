@@ -2,13 +2,16 @@
 //! tray, hotkeys) reads it from here and is told about changes through the
 //! `recorder-state` event, so they never disagree.
 
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use recorder_core::{AudioTrack, QualityPreset, RecordOptions, Recorder, RecordingSummary};
+use recorder_core::{
+    AudioConfig, AudioMeter, AudioTrack, PreviewEncoding, PreviewSession, QualityPreset, RecordOptions, Recorder, RecordingSummary,
+};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager};
+use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize};
 
 use crate::tray;
 
@@ -51,12 +54,32 @@ pub enum UiState {
     Stopping,
 }
 
+/// Which layout the main window shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum View {
+    /// Full window: preview, sources, mixer, controls.
+    #[default]
+    Studio,
+    /// Small always-on-top control bar while recording.
+    Pill,
+}
+
 #[derive(Default)]
 pub struct AppState {
     recorder: Mutex<Option<Recorder>>,
     ui: Mutex<Option<UiState>>,
     selection: Mutex<Selection>,
-    mica: AtomicBool,
+    view: Mutex<View>,
+    /// Studio window position and size, restored when leaving the pill.
+    studio_bounds: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>>,
+    /// Level meters while idle (mic check). Closed while recording.
+    meter: Mutex<Option<AudioMeter>>,
+    monitoring: AtomicBool,
+    /// Live preview stream (GPU capture → small JPEGs → UI).
+    preview: Mutex<Option<PreviewSession>>,
+    /// Preview frames sent but not yet drawn by the UI.
+    preview_in_flight: Arc<AtomicU32>,
 }
 
 impl AppState {
@@ -70,19 +93,115 @@ impl AppState {
 
     pub fn set_selection(&self, selection: Selection) {
         *self.selection.lock().unwrap() = selection;
+        self.refresh_meter();
     }
 
-    pub fn mica(&self) -> bool {
-        self.mica.load(Ordering::Relaxed)
+    pub fn view(&self) -> View {
+        *self.view.lock().unwrap()
     }
 
-    pub fn set_mica(&self, mica: bool) {
-        self.mica.store(mica, Ordering::Relaxed);
-    }
-
-    /// Peak (system, microphone) levels since the last call.
+    /// Peak (system, microphone) levels since the last call: from the
+    /// recording if there is one, otherwise from the idle meter.
     pub fn levels(&self) -> (f32, f32) {
-        self.recorder.lock().unwrap().as_ref().map(|r| r.levels()).unwrap_or((0.0, 0.0))
+        if let Some(r) = self.recorder.lock().unwrap().as_ref() {
+            return r.levels();
+        }
+        self.meter.lock().unwrap().as_ref().map(|m| m.levels()).unwrap_or((0.0, 0.0))
+    }
+
+    /// Turns the idle level meters on or off (the UI does this while visible).
+    pub fn set_monitoring(&self, on: bool) {
+        self.monitoring.store(on, Ordering::Relaxed);
+        self.refresh_meter();
+    }
+
+    /// (Re)opens the meter devices to match the selection, or closes them.
+    fn refresh_meter(&self) {
+        let mut meter = self.meter.lock().unwrap();
+        *meter = None; // close devices first
+        let idle = self.recorder.lock().unwrap().is_none();
+        let s = self.selection();
+        if !(idle && self.monitoring.load(Ordering::Relaxed) && (s.system_audio || s.microphone)) {
+            return;
+        }
+        let config = AudioConfig { system: s.system_audio, microphone: s.microphone, microphone_id: s.microphone_id };
+        match AudioMeter::start(&config) {
+            Ok(m) => *meter = Some(m),
+            Err(e) => tracing::warn!(error = %e, "failed to start level meters"),
+        }
+    }
+
+    fn close_meter(&self) {
+        *self.meter.lock().unwrap() = None;
+    }
+
+    /// (Re)starts the live preview, replacing any running one.
+    pub fn start_preview(
+        &self,
+        display: usize,
+        max_width: u32,
+        fps: u32,
+        raw: bool,
+        channel: Channel<InvokeResponseBody>,
+    ) -> Result<(), recorder_core::RecorderError> {
+        let encoding = if raw { PreviewEncoding::Raw } else { PreviewEncoding::Jpeg };
+        let mut preview = self.preview.lock().unwrap();
+        if let Some(old) = preview.take() {
+            old.stop();
+        }
+        self.preview_in_flight.store(0, Ordering::Relaxed);
+        let in_flight = Arc::clone(&self.preview_in_flight);
+        let (mut sent, mut dropped, mut bytes, mut since) = (0u32, 0u32, 0usize, std::time::Instant::now());
+        *preview = Some(PreviewSession::start(display, max_width, fps.clamp(1, 60), encoding, move |frame| {
+            if since.elapsed().as_secs() >= 5 {
+                let secs = since.elapsed().as_secs_f32();
+                tracing::debug!(
+                    fps = format!("{:.1}", sent as f32 / secs),
+                    dropped,
+                    avg_kb = if sent > 0 { bytes / sent as usize / 1024 } else { 0 },
+                    size = ?(frame.width, frame.height),
+                    "preview stream"
+                );
+                (sent, dropped, bytes, since) = (0, 0, 0, std::time::Instant::now());
+            }
+            // Drop the frame if the UI is still busy with two earlier ones.
+            if in_flight.fetch_add(1, Ordering::AcqRel) >= 2 {
+                in_flight.fetch_sub(1, Ordering::AcqRel);
+                dropped += 1;
+                return;
+            }
+            // Header: [encoding u8: 0 = JPEG, 1 = RGBA][width u32 LE][height u32 LE], then the data.
+            let mut msg = Vec::with_capacity(9 + frame.data.len());
+            msg.push(u8::from(frame.encoding == PreviewEncoding::Raw));
+            msg.extend_from_slice(&frame.width.to_le_bytes());
+            msg.extend_from_slice(&frame.height.to_le_bytes());
+            msg.extend_from_slice(frame.data);
+            if channel.send(InvokeResponseBody::Raw(msg)).is_err() {
+                in_flight.fetch_sub(1, Ordering::AcqRel);
+            } else {
+                sent += 1;
+                bytes += frame.data.len();
+            }
+        })?);
+        Ok(())
+    }
+
+    pub fn set_preview_fps(&self, fps: u32) {
+        tracing::debug!(fps, "preview rate");
+        if let Some(p) = self.preview.lock().unwrap().as_ref() {
+            p.set_fps(fps);
+        }
+    }
+
+    pub fn stop_preview(&self) {
+        if let Some(p) = self.preview.lock().unwrap().take() {
+            p.stop();
+        }
+    }
+
+    /// The UI finished drawing a preview frame.
+    pub fn preview_ack(&self) {
+        let _ = self.preview_in_flight.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
     }
 }
 
@@ -112,36 +231,66 @@ fn set_ui(app: &AppHandle, ui: UiState) {
         UiState::Idle { .. } => (false, false),
     };
     tray::update(app, recording, paused);
-    resize_main(app, &ui);
     if let Err(e) = app.emit("recorder-state", &ui) {
         tracing::warn!(error = %e, "failed to emit state");
     }
 }
 
-/// Full launcher while idle; a small control pill at the top centre while recording.
-fn resize_main(app: &AppHandle, ui: &UiState) {
+pub const STUDIO_MIN: (f64, f64) = (880.0, 580.0);
+const STUDIO_DEFAULT: (f64, f64) = (1120.0, 700.0);
+const PILL_SIZE: (f64, f64) = (340.0, 56.0);
+
+/// Switches the main window between the studio layout and the recording pill.
+pub fn set_view(app: &AppHandle, view: View) {
+    let state = app.state::<AppState>();
     let Some(window) = app.get_webview_window("main") else { return };
-    let result = match ui {
-        UiState::Idle { .. } => window.set_size(LogicalSize::new(380.0, 500.0)).and_then(|_| window.center()),
-        UiState::Starting | UiState::Recording { .. } | UiState::Stopping => {
-            let (w, h) = (300.0, 52.0);
-            window.set_size(LogicalSize::new(w, h)).and_then(|_| {
-                let monitor = window.current_monitor()?.or(window.primary_monitor()?);
-                match monitor {
-                    Some(m) => {
-                        let scale = m.scale_factor();
-                        let pos = m.position().to_logical::<f64>(scale);
-                        let size = m.size().to_logical::<f64>(scale);
-                        window.set_position(LogicalPosition::new(pos.x + (size.width - w) / 2.0, pos.y + 16.0))
+    let previous = std::mem::replace(&mut *state.view.lock().unwrap(), view);
+
+    let result: tauri::Result<()> = (|| {
+        match view {
+            View::Pill => {
+                if previous == View::Studio {
+                    if let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) {
+                        tracing::debug!(?pos, ?size, maximized = ?window.is_maximized(), "saving studio bounds");
+                        *state.studio_bounds.lock().unwrap() = Some((pos, size));
                     }
-                    None => Ok(()),
                 }
-            })
+                window.unmaximize()?;
+                window.set_min_size(None::<LogicalSize<f64>>)?;
+                window.set_resizable(false)?;
+                window.set_always_on_top(true)?;
+                window.set_size(LogicalSize::new(PILL_SIZE.0, PILL_SIZE.1))?;
+                if let Some(m) = window.current_monitor()?.or(window.primary_monitor()?) {
+                    let scale = m.scale_factor();
+                    let pos = m.position().to_logical::<f64>(scale);
+                    let size = m.size().to_logical::<f64>(scale);
+                    window.set_position(LogicalPosition::new(pos.x + (size.width - PILL_SIZE.0) / 2.0, pos.y + 14.0))?;
+                }
+            }
+            View::Studio => {
+                window.set_always_on_top(false)?;
+                window.set_resizable(true)?;
+                window.set_min_size(Some(LogicalSize::new(STUDIO_MIN.0, STUDIO_MIN.1)))?;
+                match *state.studio_bounds.lock().unwrap() {
+                    Some((pos, size)) if previous == View::Pill => {
+                        tracing::debug!(?pos, ?size, "restoring studio bounds");
+                        window.set_size(size)?;
+                        window.set_position(pos)?;
+                    }
+                    Some(_) => {}
+                    None => {
+                        window.set_size(LogicalSize::new(STUDIO_DEFAULT.0, STUDIO_DEFAULT.1))?;
+                        window.center()?;
+                    }
+                }
+            }
         }
-    };
+        Ok(())
+    })();
     if let Err(e) = result {
-        tracing::warn!(error = %e, "failed to resize window");
+        tracing::warn!(error = %e, "failed to switch view");
     }
+    let _ = app.emit("view", view);
 }
 
 pub fn show_main(app: &AppHandle) {
@@ -178,10 +327,13 @@ pub fn start_recording(app: &AppHandle) -> Result<(), String> {
 
     let app = app.clone();
     std::thread::spawn(move || {
+        // Release the devices the idle meter holds before recording opens them.
+        app.state::<AppState>().close_meter();
         let ui = match Recorder::start(options) {
             Ok(recorder) => {
                 let ui = recording_state(&recorder);
                 *app.state::<AppState>().recorder.lock().unwrap() = Some(recorder);
+                set_view(&app, View::Pill);
                 ui
             }
             Err(e) => {
@@ -189,6 +341,9 @@ pub fn start_recording(app: &AppHandle) -> Result<(), String> {
                 UiState::Idle { last: None, error: Some(e.to_string()) }
             }
         };
+        if matches!(ui, UiState::Idle { .. }) {
+            app.state::<AppState>().refresh_meter();
+        }
         set_ui(&app, ui);
         show_main(&app);
     });
@@ -213,6 +368,8 @@ pub fn stop_recording(app: &AppHandle) -> Result<(), String> {
             }
         };
         set_ui(&app, ui);
+        set_view(&app, View::Studio);
+        app.state::<AppState>().refresh_meter();
         show_main(&app);
     });
     Ok(())

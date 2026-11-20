@@ -76,7 +76,7 @@ Keep the capture and encode paths on dedicated OS threads (`std::thread`) with M
 | Frontend | Svelte 5 (light and fast) or React, TypeScript, Vite |
 | Styling | Tailwind CSS with the color tokens from [UI-DESIGN.md](UI-DESIGN.md) |
 | Icons | Fluent UI System Icons (SVG) |
-| Mica / Acrylic backdrop | [`window-vibrancy`](https://crates.io/crates/window-vibrancy) |
+| Theme | Dark studio theme in CSS tokens (`src/app.css`); no Mica (dropped with the studio redesign) |
 | Global hotkeys | `tauri-plugin-global-shortcut` |
 | Tray icon | Tauri built-in tray API |
 | Start with Windows | `tauri-plugin-autostart` |
@@ -113,7 +113,7 @@ screen-recorder/
 │  ├─ src/main.rs
 │  └─ tauri.conf.json
 ├─ src/                       # Frontend (Svelte/React)
-│  ├─ windows/                # launcher, overlay, pill, thumbnail, settings
+│  ├─ components/             # title bar, preview, mixer, side panel, control bar, pill
 │  └─ lib/
 └─ docs/
 ```
@@ -124,7 +124,7 @@ Keeping the engine in its own crate (`recorder-core`) means it can be tested wit
 
 - **Encoder trait.** Define `trait VideoEncoder` with a Media Foundation implementation first, then add an FFmpeg one later without touching the rest of the pipeline.
 - **One D3D11 device.** Create it once and share it between capture, conversion and the encoder, so frames never get copied between devices.
-- **Session events.** The Rust core emits state changes (`recording-started`, `tick`, `paused`, `finished { path }`) as Tauri events. Every window listens to the same events, so the tray, pill and launcher always agree.
+- **Session events.** The Rust core emits state changes (`recording-started`, `tick`, `paused`, `finished { path }`) as Tauri events. Every window listens to the same events, so the tray, pill and studio always agree.
 - **`unsafe` boundaries.** Keep raw COM/Win32 calls inside small, documented wrapper modules, and expose safe Rust APIs to the rest of the code.
 
 ## Learning resources

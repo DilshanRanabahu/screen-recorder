@@ -1,51 +1,50 @@
 @import "tailwindcss";
 
-/* Colour tokens from docs/UI-DESIGN.md, section 5. */
+/*
+ * Studio theme: dark, low-glare surfaces so the preview and meters stand out.
+ * Colour tokens are documented in docs/UI-DESIGN.md (section 5).
+ */
 :root {
-  --surface: #f3f3f3;
-  --surface-raised: #ffffff;
-  --text-primary: #1b1b1b;
-  --text-secondary: #5f5f5f;
-  --stroke: rgb(0 0 0 / 0.08);
-  --control: rgb(255 255 255 / 0.7);
-  --control-hover: rgb(249 249 249 / 0.9);
-  --accent: #005fb8;
-  --accent-text: #ffffff;
-  --record: #e5484d;
-  --paused: #f5a524;
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --surface: #202020;
-    --surface-raised: #2b2b2b;
-    --text-primary: #ffffff;
-    --text-secondary: #c5c5c5;
-    --stroke: rgb(255 255 255 / 0.08);
-    --control: rgb(255 255 255 / 0.06);
-    --control-hover: rgb(255 255 255 / 0.09);
-    --accent: #60cdff;
-    --accent-text: #000000;
-    --record: #ff6369;
-    --paused: #ffb224;
-    color-scheme: dark;
-  }
+  --bg: #0b0d12;
+  --panel: #12151c;
+  --raised: #191d26;
+  --hover: #222734;
+  --border: rgb(255 255 255 / 0.07);
+  --border-strong: rgb(255 255 255 / 0.12);
+  --fg: #e9ecf2;
+  --muted: #8a93a6;
+  --faint: #5b6376;
+  --accent: #7c8cff;
+  --accent-soft: rgb(124 140 255 / 0.14);
+  --record: #ff4d5e;
+  --record-soft: rgb(255 77 94 / 0.14);
+  --paused: #f5b544;
+  --ok: #3ddc97;
+  --meter-green: #3ddc97;
+  --meter-yellow: #f5d24a;
+  --meter-red: #ff4d5e;
+  color-scheme: dark;
 }
 
 @theme inline {
-  --color-surface: var(--surface);
-  --color-raised: var(--surface-raised);
-  --color-fg: var(--text-primary);
-  --color-muted: var(--text-secondary);
-  --color-stroke: var(--stroke);
-  --color-control: var(--control);
-  --color-control-hover: var(--control-hover);
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-hover: var(--hover);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
   --color-accent: var(--accent);
-  --color-on-accent: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
   --color-record: var(--record);
+  --color-record-soft: var(--record-soft);
   --color-paused: var(--paused);
+  --color-ok: var(--ok);
   --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
 }
 
 html,
@@ -53,26 +52,39 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
+  background: var(--bg);
   font-family: var(--font-sans);
-  font-size: 14px;
-  color: var(--text-primary);
+  font-size: 13px;
+  color: var(--fg);
   user-select: none;
   -webkit-font-smoothing: antialiased;
-}
-
-/* With Mica the page is transparent so the backdrop shows through.
-   Without it (Windows 10, or Mica failed) we paint a solid surface. */
-html.mica,
-html.mica body {
-  background: transparent;
-}
-html:not(.mica) body {
-  background: var(--surface);
 }
 
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Native selects, styled to match. */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a93a6' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px !important;
+}
+select option {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+/* Thin scrollbars for side panels. */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
 }
 
 @keyframes pulse-dot {
@@ -81,15 +93,36 @@ html:not(.mica) body {
     opacity: 1;
   }
   50% {
-    opacity: 0.45;
+    opacity: 0.35;
   }
 }
-.rec-dot {
-  animation: pulse-dot 1.6s ease-in-out infinite;
+.rec-pulse {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.toast-in {
+  animation: toast-in 0.18s ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rec-dot {
+  .rec-pulse,
+  .spin,
+  .toast-in {
     animation: none;
   }
   * {

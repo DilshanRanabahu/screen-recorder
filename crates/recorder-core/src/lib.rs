@@ -22,12 +22,14 @@ mod clock;
 mod display;
 mod error;
 mod options;
+mod preview;
 mod session;
 mod video;
 mod writer;
 
-pub use audio::{AudioDevice, AudioTrack, list_microphones};
-pub use display::{Display, list_displays};
+pub use audio::{AudioConfig, AudioDevice, AudioMeter, AudioTrack, list_microphones};
+pub use display::{Display, free_space, list_displays};
 pub use error::RecorderError;
+pub use preview::{PreviewEncoding, PreviewFrame, PreviewSession};
 pub use options::{Codec, QualityPreset, RecordOptions, default_output_dir, timestamped_file_name};
 pub use session::{Recorder, RecordingSummary};
