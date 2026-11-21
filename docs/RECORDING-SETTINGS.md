@@ -67,8 +67,27 @@ Default to H.264 for sharing and HEVC/AV1 for archiving.
 
 - **Never downscale** screen recordings that contain text. Record at native resolution.
 - Chroma subsampling 4:2:0 (the default) can make thin colored text slightly fuzzy. For maximum text sharpness, use **HEVC 4:4:4** (NVENC supports it; files grow about 30%).
-- Use **full-range color** (0–255) with BT.709 matrix tags, so blacks and whites match the screen exactly.
 - 30 fps is enough for code and documents. Use 60 fps when there is scrolling, animation or video.
+
+## Colour accuracy
+
+Recordings are encoded as **BT.709, limited range** (black = 16, white = 235) and **labelled as such** in the video stream (`color_range=tv`, `color_space/primaries/transfer=bt709`). Measured on the dev laptop, every grey level lands exactly on the standard value:
+
+| Screen value | 0 | 16 | 64 | 128 | 192 | 255 |
+|---|---|---|---|---|---|---|
+| Encoded luma (Y) | 16 | 30 | 71 | 126 | 181 | 235 |
+
+**Why the labels matter.** Recordings made before November 21, 2026 had *no* colour labels. Players then have to guess, and a player that guesses "full range" shows black (16) as dark grey and white (235) as off-white: the whole picture looks washed out and too bright. The encoding itself was always correct; only the label was missing.
+
+Fix an older recording without re-encoding (instant, no quality loss):
+
+```powershell
+ffmpeg -i old.mp4 -c copy -bsf:v "h264_metadata=video_full_range_flag=0:colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1" fixed.mp4
+```
+
+Why not full range (0–255)? Many players and editors ignore the full-range flag and then crush shadows and highlights. Limited range with correct labels is what OBS, cameras and streaming sites use, so it plays correctly everywhere.
+
+Check a recording: `ffprobe -v error -select_streams v -show_entries stream=color_range,color_space -of compact file.mp4` should print `color_range=tv|color_space=bt709`.
 
 ## Container
 

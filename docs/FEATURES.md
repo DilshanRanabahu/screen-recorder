@@ -44,7 +44,8 @@ The minimum needed to replace other recorders for daily work.
 - [ ] Software-encoding fallback at a lower frame rate
 - [x] Quality presets: *Standard*, *High*, *Maximum* (see [RECORDING-SETTINGS.md](RECORDING-SETTINGS.md))
 - [x] Constant frame rate output, in sync with audio
-- [x] Crash-safe recording (fragmented MP4, written directly; no remux needed)
+- [x] Crash-safe recording (fragmented MP4, written directly; no remux needed). H.264 only; HEVC uses regular MP4
+- [x] Correct colours: BT.709 limited range, labelled in the stream (fixes washed-out playback)
 - [x] Automatic file naming: `Recording_2026-11-20_14-32-05.mp4`
 - [ ] Configurable output folder (fixed to `Videos\Recordings` for now; "Open folder" works)
 - [x] Choices saved between app restarts (display, quality, audio, mic) in `%APPDATA%\ScreenRecorder\settings.json`

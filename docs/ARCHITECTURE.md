@@ -162,5 +162,7 @@ Possible later improvements:
 
 ## Known issues
 
+- **HEVC (Maximum preset) is not crash-safe.** Windows' fragmented-MP4 writer rejects HEVC, so HEVC recordings use a regular MP4, which is only complete after Stop. H.264 (Standard, High) stays fragmented and crash-safe. Before November 21, 2026 the HEVC preset failed to start at all.
+
 - **Rare colour glitch:** one keyframe in one test had wrong colours (correct brightness) for a single frame. It was not reproduced in about 2,500 frames over 5 further runs. Suspected cause: concurrent use of the shared D3D11 device. Scan test recordings for colour outliers to catch it if it returns.
 - **WGC capture delivers frames at up to the target rate only;** the pacer repeats frames, so very fast content above the frame rate is sampled, not blended.

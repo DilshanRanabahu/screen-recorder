@@ -112,7 +112,7 @@ export const api = {
 export const presets: Record<Preset, { label: string; fps: number; codec: string; bpp: number; hint: string }> = {
   standard: { label: "Standard", fps: 30, codec: "H.264", bpp: 0.16, hint: "Meetings · small files" },
   high: { label: "High", fps: 60, codec: "H.264", bpp: 0.13, hint: "Tutorials · demos" },
-  maximum: { label: "Maximum", fps: 60, codec: "HEVC", bpp: 0.17, hint: "Archive · editing" },
+  maximum: { label: "Maximum", fps: 60, codec: "HEVC", bpp: 0.17, hint: "Archive · not crash-safe" },
 };
 
 /** Video bitrate in bits/s, same formula as the engine. */

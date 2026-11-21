@@ -31,8 +31,29 @@ fn mf_startup() -> Result<(), RecorderError> {
         .map_err(RecorderError::Encoder)
 }
 
+/// Fragmented MP4 (crash-safe) for H.264. Windows' fragmented-MP4 writer
+/// rejects HEVC (BeginWriting fails with MF_E_INVALIDMEDIATYPE), so HEVC uses
+/// a regular MP4, which is only complete once the recording is stopped.
+fn container_for(codec: Codec) -> &'static windows::core::GUID {
+    match codec {
+        Codec::H264 => &MFTranscodeContainerType_FMPEG4,
+        Codec::Hevc => &MFTranscodeContainerType_MPEG4,
+    }
+}
+
 fn pack(hi: u32, lo: u32) -> u64 {
     (u64::from(hi) << 32) | u64::from(lo)
+}
+
+/// How much colour information to label the video with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorTags {
+    /// Range, matrix, primaries and transfer (BT.709 limited).
+    Full,
+    /// Range and matrix only; the minimum that prevents washed-out playback.
+    RangeAndMatrix,
+    /// No labels (players guess).
+    None,
 }
 
 pub struct VideoFormat {
@@ -87,35 +108,53 @@ impl Writer {
             // Never block the capture/mixer threads; the hardware encoder keeps up.
             attrs.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1).map_err(err("throttling"))?;
             attrs
-                .SetGUID(&MF_TRANSCODE_CONTAINERTYPE, &MFTranscodeContainerType_FMPEG4)
+                .SetGUID(&MF_TRANSCODE_CONTAINERTYPE, container_for(video.codec))
                 .map_err(err("container"))?;
 
             let t_dev = t0.elapsed();
-            let writer = MFCreateSinkWriterFromURL(&HSTRING::from(path.as_os_str()), None, &attrs)
-                .map_err(err("create sink writer"))?;
-            let t_sink = t0.elapsed();
 
-            let video_stream = Self::add_video(&writer, video)?;
-            let mut audio_streams = Vec::new();
-            for &track in audio_tracks {
-                audio_streams.push((track, Self::add_audio(&writer)?));
+            // Prefer full colour labels; fall back if an encoder rejects some of
+            // them (Intel's HEVC encoder refuses the full set), so labels can
+            // never stop a recording from starting.
+            let mut last_error = None;
+            for tags in [ColorTags::Full, ColorTags::RangeAndMatrix, ColorTags::None] {
+                let attempt = (|| {
+                    let writer = MFCreateSinkWriterFromURL(&HSTRING::from(path.as_os_str()), None, &attrs)
+                        .map_err(err("create sink writer"))?;
+                    let video_stream = Self::add_video(&writer, video, tags)?;
+                    let mut audio_streams = Vec::new();
+                    for &track in audio_tracks {
+                        audio_streams.push((track, Self::add_audio(&writer)?));
+                    }
+                    writer.BeginWriting().map_err(err("begin writing"))?;
+                    Ok::<_, RecorderError>((writer, video_stream, audio_streams))
+                })();
+                match attempt {
+                    Ok((writer, video_stream, audio_streams)) => {
+                        tracing::debug!(
+                            ?tags,
+                            codec = ?video.codec,
+                            mf_startup_ms = t_startup.as_millis() as u64,
+                            device_ms = (t_dev - t_startup).as_millis() as u64,
+                            setup_ms = (t0.elapsed() - t_dev).as_millis() as u64,
+                            "writer ready"
+                        );
+                        if tags != ColorTags::Full {
+                            tracing::warn!(?tags, codec = ?video.codec, "encoder rejected some colour labels");
+                        }
+                        return Ok(Self { writer, video_stream, audio_streams, _device_manager: manager });
+                    }
+                    Err(e) => {
+                        tracing::debug!(?tags, error = %e, "writer setup failed with these colour labels");
+                        last_error = Some(e);
+                    }
+                }
             }
-
-            let t_streams = t0.elapsed();
-            writer.BeginWriting().map_err(err("begin writing"))?;
-            tracing::debug!(
-                mf_startup_ms = t_startup.as_millis() as u64,
-                device_ms = (t_dev - t_startup).as_millis() as u64,
-                sink_writer_ms = (t_sink - t_dev).as_millis() as u64,
-                streams_ms = (t_streams - t_sink).as_millis() as u64,
-                begin_ms = (t0.elapsed() - t_streams).as_millis() as u64,
-                "writer setup timing"
-            );
-            Ok(Self { writer, video_stream, audio_streams, _device_manager: manager })
+            Err(last_error.unwrap_or_else(|| RecorderError::Encoder("writer setup failed".into())))
         }
     }
 
-    unsafe fn add_video(writer: &IMFSinkWriter, v: &VideoFormat) -> Result<u32, RecorderError> {
+    unsafe fn add_video(writer: &IMFSinkWriter, v: &VideoFormat, tags: ColorTags) -> Result<u32, RecorderError> {
         unsafe {
             let out = MFCreateMediaType().map_err(err("video type"))?;
             out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video).map_err(err("video major"))?;
@@ -129,8 +168,21 @@ impl Writer {
             out.SetUINT64(&MF_MT_FRAME_SIZE, pack(v.width, v.height)).map_err(err("frame size"))?;
             out.SetUINT64(&MF_MT_FRAME_RATE, pack(v.fps, 1)).map_err(err("frame rate"))?;
             out.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack(1, 1)).map_err(err("aspect"))?;
+            // Label the colours explicitly: BT.709, limited range (black = 16, white = 235).
+            // Without these tags the file says nothing about its colours, and players
+            // that guess "full range" show black as grey: a washed-out picture.
+            if tags != ColorTags::None {
+                out.SetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235.0 as u32).map_err(err("range"))?;
+                out.SetUINT32(&MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709.0 as u32).map_err(err("matrix"))?;
+            }
+            if tags == ColorTags::Full {
+                out.SetUINT32(&MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709.0 as u32).map_err(err("primaries"))?;
+                out.SetUINT32(&MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709.0 as u32).map_err(err("transfer"))?;
+            }
             if v.codec == Codec::H264 {
                 out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32).map_err(err("profile"))?;
+            } else {
+                out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH265VProfile_Main_420_8.0 as u32).map_err(err("profile"))?;
             }
             let stream = writer.AddStream(&out).map_err(err("add video stream"))?;
 
@@ -141,6 +193,14 @@ impl Writer {
             input.SetUINT64(&MF_MT_FRAME_SIZE, pack(v.width, v.height)).map_err(err("input size"))?;
             input.SetUINT64(&MF_MT_FRAME_RATE, pack(v.fps, 1)).map_err(err("input rate"))?;
             input.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack(1, 1)).map_err(err("input aspect"))?;
+            // The captured desktop is full-range sRGB.
+            if tags != ColorTags::None {
+                input.SetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_0_255.0 as u32).map_err(err("input range"))?;
+            }
+            if tags == ColorTags::Full {
+                input.SetUINT32(&MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709.0 as u32).map_err(err("input primaries"))?;
+                input.SetUINT32(&MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_sRGB.0 as u32).map_err(err("input transfer"))?;
+            }
 
             // Keyframe every 2 s, for quick seeking and small fragments.
             let mut params = None;
