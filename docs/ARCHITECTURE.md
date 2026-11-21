@@ -142,6 +142,8 @@ Measured on the dev laptop (i5-10210U, Intel UHD, QuickSync), 1080p60 H.264:
 | Pause | 2 s pause → no gap; file = recorded time only |
 | Crash (process killed) | File plays up to the last fragment, decodes without errors |
 
+**Recordings folder watcher** (`src-tauri/src/watcher.rs`): a thread watches `Videos\Recordings` with `ReadDirectoryChangesW` (`notify` crate) and emits `recordings-changed`, batched (400 ms quiet, at most every 2 s). If the folder is deleted or the watch fails, it recreates the folder and re-attaches. Tested: create, rename, move out, delete, non-video files ignored, folder deleted and recreated.
+
 The Tauri app (`src-tauri`) only calls into `recorder-core` and forwards its events to the UI. Recording code never depends on Tauri.
 
 ## Timing and A/V sync

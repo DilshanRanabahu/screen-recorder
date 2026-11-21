@@ -58,7 +58,7 @@ The minimum needed to replace other recorders for daily work.
 - [ ] **Webcam overlay**: picture-in-picture, movable, round or rectangular
 - [ ] **Instant replay buffer**: always keeps the last N minutes in memory, saved with a hotkey
 - [ ] **Quick trim editor**: cut start and end without re-encoding (no quality loss)
-- [x] **Recording history**: recent recordings list in the studio (no thumbnails yet)
+- [x] **Recording history**: recent recordings list in the studio, kept in sync with the folder in real time (no thumbnails yet)
 - [ ] **Screenshot** hotkey (PNG, same region tools)
 
 ## Phase 3: Polish

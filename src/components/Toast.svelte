@@ -9,10 +9,13 @@
 </script>
 
 <script lang="ts">
-  import { api } from "../lib/api";
   import Icon from "./Icon.svelte";
 
-  let { toast, dismiss }: { toast: ToastData; dismiss: () => void } = $props();
+  let {
+    toast,
+    dismiss,
+    open,
+  }: { toast: ToastData; dismiss: () => void; open: (path: string, reveal: boolean) => void } = $props();
 
   $effect(() => {
     const t = setTimeout(dismiss, toast.kind === "error" ? 12_000 : 7_000);
@@ -34,8 +37,8 @@
     {#if toast.path}
       {@const path = toast.path}
       <div class="mt-2 flex gap-2">
-        <button class="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-[#0b0d12] hover:brightness-110" onclick={() => api.openPath(path, false)}>Play</button>
-        <button class="rounded-md border border-line-strong px-2.5 py-1 text-xs hover:bg-hover" onclick={() => api.openPath(path, true)}>Show in folder</button>
+        <button class="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-[#0b0d12] hover:brightness-110" onclick={() => open(path, false)}>Play</button>
+        <button class="rounded-md border border-line-strong px-2.5 py-1 text-xs hover:bg-hover" onclick={() => open(path, true)}>Show in folder</button>
       </div>
     {/if}
   </div>

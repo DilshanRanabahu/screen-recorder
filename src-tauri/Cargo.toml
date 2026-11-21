@@ -20,3 +20,4 @@ tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 anyhow.workspace = true
 dirs.workspace = true
+notify = { version = "9.0.0", default-features = false }

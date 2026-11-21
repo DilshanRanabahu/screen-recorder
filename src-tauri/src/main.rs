@@ -6,6 +6,7 @@ mod logging;
 mod settings;
 mod state;
 mod tray;
+mod watcher;
 
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -37,7 +38,7 @@ fn main() {
             commands::get_levels,
             commands::set_monitoring,
             commands::start_preview,
-            commands::stop_preview,
+            commands::stop_preview_session,
             commands::preview_ack,
             commands::set_preview_fps,
             commands::list_recordings,
@@ -71,6 +72,10 @@ fn main() {
             }
 
             tray::create(handle)?;
+
+            // Keep "Recent recordings" in sync with the folder, even for changes
+            // made in Explorer.
+            watcher::spawn(handle.clone());
 
             // Load the hardware encoder now so the first recording starts quickly.
             let state = app.state::<AppState>();

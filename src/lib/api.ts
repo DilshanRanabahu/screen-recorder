@@ -92,20 +92,24 @@ export const api = {
 
   /**
    * Streams preview frames of a display; call `previewAck` after drawing each one.
-   * Each message: `[encoding u8: 0 = JPEG, 1 = RGBA][width u32 LE][height u32 LE][data…]`.
+   * Resolves to the session id. Each message:
+   * `[encoding u8: 0 = JPEG, 1 = RGBA][width u32 LE][height u32 LE][session id u32 LE][data…]`.
    */
   startPreview(display: number, maxWidth: number, fps: number, raw: boolean, onFrame: (msg: unknown) => void) {
     const channel = new Channel<unknown>();
     channel.onmessage = onFrame;
-    return invoke<void>("start_preview", { display, maxWidth, fps, raw, channel });
+    return invoke<number>("start_preview", { display, maxWidth, fps, raw, channel });
   },
-  stopPreview: () => invoke<void>("stop_preview"),
-  previewAck: () => invoke<void>("preview_ack"),
+  /** Stops preview session `id`; a stop for an older session is ignored. */
+  stopPreview: (id: number) => invoke<void>("stop_preview_session", { id }),
+  previewAck: (id: number) => invoke<void>("preview_ack", { id }),
   setPreviewFps: (fps: number) => invoke<void>("set_preview_fps", { fps }),
 
   onState: (cb: (s: RecorderState) => void): Promise<UnlistenFn> =>
     listen<RecorderState>("recorder-state", (e) => cb(e.payload)),
   onView: (cb: (v: View) => void): Promise<UnlistenFn> => listen<View>("view", (e) => cb(e.payload)),
+  /** Fired (debounced) when files change in the recordings folder, from inside or outside the app. */
+  onRecordingsChanged: (cb: () => void): Promise<UnlistenFn> => listen("recordings-changed", () => cb()),
 };
 
 // Mirrors QualityPreset in crates/recorder-core/src/options.rs.

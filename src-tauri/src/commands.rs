@@ -51,9 +51,10 @@ pub fn set_monitoring(state: State<'_, AppState>, on: bool) {
     state.set_monitoring(on);
 }
 
-/// Starts streaming the live preview of `display` to `channel`. Each message is
-/// a 9-byte header followed by JPEG (or raw RGBA) data; see
-/// `AppState::start_preview`. The UI calls `preview_ack` after drawing each
+/// Starts streaming the live preview of `display` to `channel` and returns the
+/// session id. Each message is a 13-byte header (encoding, width, height,
+/// session id) followed by JPEG (or raw RGBA) data; see
+/// `AppState::start_preview`. The UI calls `preview_ack(id)` after drawing each
 /// frame; at most two frames are in flight, so a busy UI never builds a backlog.
 #[tauri::command]
 pub async fn start_preview(
@@ -63,13 +64,14 @@ pub async fn start_preview(
     fps: u32,
     raw: bool,
     channel: Channel<InvokeResponseBody>,
-) -> Result<(), String> {
+) -> Result<u32, String> {
     state.start_preview(display, max_width, fps, raw, channel).map_err(|e| e.to_string())
 }
 
+/// Stops preview session `id`; ignored if a newer session has replaced it.
 #[tauri::command]
-pub async fn stop_preview(state: State<'_, AppState>) -> Result<(), String> {
-    state.stop_preview();
+pub async fn stop_preview_session(state: State<'_, AppState>, id: u32) -> Result<(), String> {
+    state.stop_preview(id);
     Ok(())
 }
 
@@ -79,8 +81,8 @@ pub fn set_preview_fps(state: State<'_, AppState>, fps: u32) {
 }
 
 #[tauri::command]
-pub fn preview_ack(state: State<'_, AppState>) {
-    state.preview_ack();
+pub fn preview_ack(state: State<'_, AppState>, id: u32) {
+    state.preview_ack(id);
 }
 
 #[derive(Serialize)]
@@ -111,6 +113,7 @@ pub fn list_recordings(limit: usize) -> Vec<RecordingFile> {
         })
         .collect();
     files.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+    tracing::debug!(count = files.len(), newest = files.first().map(|f| f.name.as_str()), "recent recordings listed");
     files.truncate(limit);
     files
 }
@@ -172,6 +175,9 @@ pub fn set_view(app: AppHandle, view: View) {
 #[tauri::command]
 pub fn open_path(path: String, reveal: bool) -> Result<(), String> {
     let path = Path::new(&path);
+    if !path.is_file() {
+        return Err("This recording no longer exists. It may have been moved, renamed or deleted.".into());
+    }
     let root = recorder_core::default_output_dir();
     let inside = path
         .canonicalize()

@@ -37,6 +37,8 @@
   let fps = $state(0);
 
   const MAX_WIDTH = 960;
+  /** Frame header: encoding u8, width u32, height u32, session id u32. */
+  const HEADER = 13;
   // Raw RGBA frames (no JPEG encode/decode) vs JPEG; see docs/UI-DESIGN.md.
   const RAW_FRAMES = false;
   const recordingNow = $derived(rec.status === "recording");
@@ -59,46 +61,49 @@
       frames = 0;
     }, 1000);
 
-    api
-      .startPreview(index, MAX_WIDTH, rate, RAW_FRAMES, async (incoming: unknown) => {
-        try {
-          if (stopped || !ctx) return;
-          // Normally an ArrayBuffer. If the fast binary IPC is unavailable,
-          // Tauri falls back to JSON and delivers a number array instead.
-          const msg = toArrayBuffer(incoming);
-          const head = new DataView(msg, 0, 9);
-          const raw = head.getUint8(0) === 1;
-          const width = head.getUint32(1, true);
-          const height = head.getUint32(5, true);
-          if (target.width !== width || target.height !== height) {
-            target.width = width;
-            target.height = height;
-          }
-          if (raw) {
-            ctx.putImageData(new ImageData(new Uint8ClampedArray(msg, 9, width * height * 4), width, height), 0, 0);
-          } else {
-            const bitmap = await createImageBitmap(new Blob([new Uint8Array(msg, 9)], { type: "image/jpeg" }));
-            if (!stopped) ctx.drawImage(bitmap, 0, 0);
-            bitmap.close();
-          }
-          hasFrame = true;
-          failed = null;
-          frames++;
-        } catch (e) {
-          // Show the problem instead of staying on "Starting preview…".
-          if (!hasFrame) failed = `could not draw frame (${String(e)})`;
-          console.error("preview frame failed", e);
-        } finally {
-          api.previewAck();
+    // Each start creates a new session with its own id. Cleanup stops exactly
+    // that session, so when the display changes, a late "stop" for the old
+    // session can never kill the new one (that race froze the preview).
+    const session = api.startPreview(index, MAX_WIDTH, rate, RAW_FRAMES, async (incoming: unknown) => {
+      let id: number | null = null;
+      try {
+        // Normally an ArrayBuffer. If the fast binary IPC is unavailable,
+        // Tauri falls back to JSON and delivers a number array instead.
+        const msg = toArrayBuffer(incoming);
+        const head = new DataView(msg, 0, HEADER);
+        id = head.getUint32(9, true);
+        if (stopped || !ctx) return;
+        const raw = head.getUint8(0) === 1;
+        const width = head.getUint32(1, true);
+        const height = head.getUint32(5, true);
+        if (target.width !== width || target.height !== height) {
+          target.width = width;
+          target.height = height;
         }
-      })
-      .then(() => (failed = null))
-      .catch((e) => (failed = String(e)));
+        if (raw) {
+          ctx.putImageData(new ImageData(new Uint8ClampedArray(msg, HEADER, width * height * 4), width, height), 0, 0);
+        } else {
+          const bitmap = await createImageBitmap(new Blob([new Uint8Array(msg, HEADER)], { type: "image/jpeg" }));
+          if (!stopped) ctx.drawImage(bitmap, 0, 0);
+          bitmap.close();
+        }
+        hasFrame = true;
+        failed = null;
+        frames++;
+      } catch (e) {
+        // Show the problem instead of staying on "Starting preview…".
+        if (!hasFrame) failed = `could not draw frame (${String(e)})`;
+        console.error("preview frame failed", e);
+      } finally {
+        if (id !== null) api.previewAck(id);
+      }
+    });
+    session.then(() => (failed = null)).catch((e) => (failed = String(e)));
 
     return () => {
       stopped = true;
       clearInterval(counter);
-      api.stopPreview();
+      session.then((id) => api.stopPreview(id)).catch(() => {});
     };
   });
 

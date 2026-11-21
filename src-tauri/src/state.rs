@@ -92,10 +92,23 @@ pub struct AppState {
     monitoring: AtomicBool,
     /// Codecs whose hardware encoder has been warmed up (see `warm_up_encoder`).
     warmed: Arc<Mutex<Vec<recorder_core::Codec>>>,
-    /// Live preview stream (GPU capture → small JPEGs → UI).
-    preview: Mutex<Option<PreviewSession>>,
-    /// Preview frames sent but not yet drawn by the UI.
-    preview_in_flight: Arc<AtomicU32>,
+    /// Live preview stream (GPU capture → small JPEGs → UI). At most one runs.
+    preview: Mutex<Option<ActivePreview>>,
+    /// Source of preview session ids.
+    next_preview_id: AtomicU32,
+}
+
+/// The running preview and what identifies it.
+///
+/// Every session gets an id. `stop_preview` and `preview_ack` name the session
+/// they mean, so a late "stop" or "ack" from a previous session (for example
+/// right after switching displays) can never affect the new one.
+struct ActivePreview {
+    id: u32,
+    display: usize,
+    session: PreviewSession,
+    /// Frames sent to the UI but not yet drawn.
+    in_flight: Arc<AtomicU32>,
 }
 
 impl AppState {
@@ -192,7 +205,8 @@ impl AppState {
         *self.meter.lock().unwrap() = None;
     }
 
-    /// (Re)starts the live preview, replacing any running one.
+    /// Starts the live preview of `display`, replacing any running one, and
+    /// returns the new session's id.
     pub fn start_preview(
         &self,
         display: usize,
@@ -200,19 +214,31 @@ impl AppState {
         fps: u32,
         raw: bool,
         channel: Channel<InvokeResponseBody>,
-    ) -> Result<(), recorder_core::RecorderError> {
+    ) -> Result<u32, recorder_core::RecorderError> {
+        // (`display` is a helper name inside tracing macros, so log `screen`.)
+        let screen = display;
         let encoding = if raw { PreviewEncoding::Raw } else { PreviewEncoding::Jpeg };
+        let id = self.next_preview_id.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let mut preview = self.preview.lock().unwrap();
         if let Some(old) = preview.take() {
-            old.stop();
+            tracing::debug!(old_id = old.id, old_screen = old.display, new_id = id, screen, "preview replaced");
+            old.session.stop();
         }
-        self.preview_in_flight.store(0, Ordering::Relaxed);
-        let in_flight = Arc::clone(&self.preview_in_flight);
+        let in_flight = Arc::new(AtomicU32::new(0));
+        let frames_in_flight = Arc::clone(&in_flight);
         let (mut sent, mut dropped, mut bytes, mut since) = (0u32, 0u32, 0usize, std::time::Instant::now());
-        *preview = Some(PreviewSession::start(display, max_width, fps.clamp(1, 60), encoding, move |frame| {
+        let (started, mut first_frame) = (std::time::Instant::now(), true);
+        let session = PreviewSession::start(display, max_width, fps.clamp(1, 60), encoding, move |frame| {
+            let in_flight = &frames_in_flight;
+            if first_frame {
+                first_frame = false;
+                tracing::debug!(id, screen, after_ms = started.elapsed().as_millis() as u64, "preview first frame");
+            }
             if since.elapsed().as_secs() >= 5 {
                 let secs = since.elapsed().as_secs_f32();
                 tracing::debug!(
+                    id,
+                    screen,
                     fps = format!("{:.1}", sent as f32 / secs),
                     dropped,
                     avg_kb = if sent > 0 { bytes / sent as usize / 1024 } else { 0 },
@@ -227,11 +253,13 @@ impl AppState {
                 dropped += 1;
                 return;
             }
-            // Header: [encoding u8: 0 = JPEG, 1 = RGBA][width u32 LE][height u32 LE], then the data.
-            let mut msg = Vec::with_capacity(9 + frame.data.len());
+            // Header (13 bytes): [encoding u8: 0 = JPEG, 1 = RGBA][width u32 LE]
+            // [height u32 LE][session id u32 LE], then the data.
+            let mut msg = Vec::with_capacity(13 + frame.data.len());
             msg.push(u8::from(frame.encoding == PreviewEncoding::Raw));
             msg.extend_from_slice(&frame.width.to_le_bytes());
             msg.extend_from_slice(&frame.height.to_le_bytes());
+            msg.extend_from_slice(&id.to_le_bytes());
             msg.extend_from_slice(frame.data);
             if channel.send(InvokeResponseBody::Raw(msg)).is_err() {
                 in_flight.fetch_sub(1, Ordering::AcqRel);
@@ -239,26 +267,41 @@ impl AppState {
                 sent += 1;
                 bytes += frame.data.len();
             }
-        })?);
-        Ok(())
+        })?;
+        tracing::debug!(id, screen, "preview session active");
+        *preview = Some(ActivePreview { id, display, session, in_flight });
+        Ok(id)
     }
 
     pub fn set_preview_fps(&self, fps: u32) {
         tracing::debug!(fps, "preview rate");
         if let Some(p) = self.preview.lock().unwrap().as_ref() {
-            p.set_fps(fps);
+            p.session.set_fps(fps);
         }
     }
 
-    pub fn stop_preview(&self) {
-        if let Some(p) = self.preview.lock().unwrap().take() {
-            p.stop();
+    /// Stops preview session `id`. A stop for an older session (one already
+    /// replaced by a newer `start_preview`) is ignored.
+    pub fn stop_preview(&self, id: u32) {
+        let mut preview = self.preview.lock().unwrap();
+        match preview.as_ref() {
+            Some(p) if p.id == id => {
+                let p = preview.take().expect("checked above");
+                tracing::debug!(id, screen = p.display, "preview stopped");
+                p.session.stop();
+            }
+            Some(p) => tracing::debug!(stale_id = id, current_id = p.id, "ignored stop for an older preview session"),
+            None => {}
         }
     }
 
-    /// The UI finished drawing a preview frame.
-    pub fn preview_ack(&self) {
-        let _ = self.preview_in_flight.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+    /// The UI finished drawing a frame of session `id`.
+    pub fn preview_ack(&self, id: u32) {
+        if let Some(p) = self.preview.lock().unwrap().as_ref()
+            && p.id == id
+        {
+            let _ = p.in_flight.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+        }
     }
 }
 

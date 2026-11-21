@@ -56,7 +56,18 @@
   }
 
   async function refreshFiles() {
-    [recent, freeBytes] = await Promise.all([api.recordings(6), api.storageFree()]);
+    [recent, freeBytes] = await Promise.all([api.recordings(50), api.storageFree()]);
+  }
+
+  /// Opens a recording (or shows it in Explorer). If it was moved, renamed or
+  /// deleted outside the app, say so and refresh the list.
+  async function openRecording(path: string, reveal: boolean) {
+    try {
+      await api.openPath(path, reveal);
+    } catch (e) {
+      toast({ kind: "error", title: "Can't open recording", detail: String(e) });
+      refreshFiles();
+    }
   }
 
   /// Idle level meters run only while the studio is visible.
@@ -126,6 +137,10 @@
       minimized = await win.isMinimized().catch(() => false);
       syncMonitoring();
     }).then((u) => unlisten.push(u));
+    // Safety net: re-read the folder whenever the window comes back into focus.
+    win.onFocusChanged(({ payload }) => payload && refreshFiles()).then((u) => unlisten.push(u));
+    // Real-time updates when files change in the recordings folder (see watcher.rs).
+    api.onRecordingsChanged(() => refreshFiles()).then((u) => unlisten.push(u));
 
     (async () => {
       const info = await api.uiInfo();
@@ -190,14 +205,14 @@
         />
         <Mixer {selection} {mics} {levels} {rec} {update} />
       </section>
-      <SidePanel {selection} {displays} {recent} {rec} {update} />
+      <SidePanel {selection} {displays} {recent} {rec} {update} open={openRecording} />
     </div>
     <ControlBar {rec} {elapsed} {selection} {display} {freeBytes} {hotkey} {pauseHotkey} {run} />
   </div>
 
   <div class="pointer-events-none fixed right-4 bottom-[92px] flex flex-col items-end gap-2">
     {#each toasts as t (t.id)}
-      <Toast toast={t} dismiss={() => (toasts = toasts.filter((x) => x.id !== t.id))} />
+      <Toast toast={t} dismiss={() => (toasts = toasts.filter((x) => x.id !== t.id))} open={openRecording} />
     {/each}
   </div>
 {/if}

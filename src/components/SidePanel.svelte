@@ -9,12 +9,15 @@
     recent,
     rec,
     update,
+    open,
   }: {
     selection: Selection;
     displays: Display[];
     recent: RecordingFile[];
     rec: RecorderState;
     update: (patch: Partial<Selection>) => void;
+    /** Opens a recording (or shows it in Explorer); reports missing files. */
+    open: (path: string, reveal: boolean) => void;
   } = $props();
 
   const locked = $derived(rec.status !== "idle");
@@ -29,7 +32,8 @@
   <h2 class="mb-2.5 text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">{text}</h2>
 {/snippet}
 
-<aside class="flex min-h-0 w-[300px] shrink-0 flex-col gap-3 overflow-y-auto">
+<!-- The panel itself only scrolls as a fallback in very short windows. -->
+<aside class="scroll-list flex min-h-0 w-[300px] shrink-0 flex-col gap-3 overflow-y-auto">
   <!-- Source -->
   <section class="rounded-xl border border-line bg-panel p-4">
     {@render heading("Capture")}
@@ -97,9 +101,15 @@
   </section>
 
   <!-- Recent -->
-  <section class="flex min-h-[160px] flex-1 flex-col rounded-xl border border-line bg-panel p-4">
-    <div class="flex items-center justify-between">
-      {@render heading("Recent recordings")}
+  <!-- Fills the remaining height; only the list inside scrolls. -->
+  <section class="flex min-h-[112px] flex-1 flex-col rounded-xl border border-line bg-panel pt-4 pb-2 pl-4 pr-2">
+    <div class="flex items-center justify-between pr-2">
+      <h2 class="mb-2.5 flex items-center gap-2 text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">
+        Recent recordings
+        {#if recent.length > 0}
+          <span class="rounded-full bg-white/5 px-1.5 py-px text-[10px] font-medium tracking-normal text-faint tabular-nums">{recent.length}</span>
+        {/if}
+      </h2>
       <button class="-mt-2.5 text-[11px] text-accent hover:underline" onclick={() => api.openFolder()}>Open folder</button>
     </div>
     {#if recent.length === 0}
@@ -108,7 +118,9 @@
         <p class="text-xs">Your recordings will appear here</p>
       </div>
     {:else}
-      <ul class="-mx-2 flex flex-col">
+      <!-- Own scroll area: scrollbar only when the list overflows; scrolling
+           stops at the ends instead of moving the rest of the panel. -->
+      <ul class="scroll-list -ml-2 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pr-1" aria-label="Recent recordings">
         {#each recent as r (r.path)}
           <li class="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-raised">
             <span class="grid size-8 shrink-0 place-items-center rounded-md bg-white/5 text-muted">
@@ -118,10 +130,10 @@
               <p class="truncate text-[12px]" title={r.name}>{formatWhen(r.modified_ms)}</p>
               <p class="text-[11px] text-faint">{formatBytes(r.bytes)}</p>
             </div>
-            <button class="grid size-7 place-items-center rounded-md text-muted opacity-0 group-hover:opacity-100 hover:bg-hover hover:text-fg focus:opacity-100" title="Play" aria-label="Play {r.name}" onclick={() => api.openPath(r.path, false)}>
+            <button class="grid size-7 place-items-center rounded-md text-muted opacity-0 group-hover:opacity-100 hover:bg-hover hover:text-fg focus:opacity-100" title="Play" aria-label="Play {r.name}" onclick={() => open(r.path, false)}>
               <Icon name="play" size={13} fill />
             </button>
-            <button class="grid size-7 place-items-center rounded-md text-muted opacity-0 group-hover:opacity-100 hover:bg-hover hover:text-fg focus:opacity-100" title="Show in folder" aria-label="Show {r.name} in folder" onclick={() => api.openPath(r.path, true)}>
+            <button class="grid size-7 place-items-center rounded-md text-muted opacity-0 group-hover:opacity-100 hover:bg-hover hover:text-fg focus:opacity-100" title="Show in folder" aria-label="Show {r.name} in folder" onclick={() => open(r.path, true)}>
               <Icon name="folder" size={14} />
             </button>
           </li>
