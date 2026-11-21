@@ -7,11 +7,13 @@
 -->
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, formatClock, type Display, type RecorderState } from "../lib/api";
+  import { api, formatClock, type Display, type RecorderState, type WindowInfo } from "../lib/api";
   import Icon from "./Icon.svelte";
 
   let {
     display,
+    window,
+    windowMode = false,
     rec,
     elapsed,
     active = true,
@@ -20,6 +22,9 @@
     setEnabled,
   }: {
     display: Display | undefined;
+    /** The chosen window (Window mode), if it is still open. */
+    window?: WindowInfo;
+    windowMode?: boolean;
     rec: RecorderState;
     elapsed: number;
     /** False while minimized or hidden. */
@@ -43,8 +48,18 @@
   const RAW_FRAMES = false;
   const recordingNow = $derived(rec.status === "recording");
 
+  // A plain number, so refreshing the window list (new objects every few
+  // seconds) does not restart the preview; only choosing another window does.
+  const previewWindowId = $derived(windowMode ? (window?.id ?? null) : null);
+
   $effect(() => {
     const index = display?.index;
+    // In Window mode, preview the chosen window instead of the display.
+    const windowId = previewWindowId;
+    if (windowMode && windowId === null) {
+      hasFrame = false;
+      return;
+    }
     const target = canvas;
     if (!index || !target || !active || !enabled) {
       hasFrame = false;
@@ -64,7 +79,7 @@
     // Each start creates a new session with its own id. Cleanup stops exactly
     // that session, so when the display changes, a late "stop" for the old
     // session can never kill the new one (that race froze the preview).
-    const session = api.startPreview(index, MAX_WIDTH, rate, RAW_FRAMES, async (incoming: unknown) => {
+    const session = api.startPreview(index, windowId, MAX_WIDTH, rate, RAW_FRAMES, async (incoming: unknown) => {
       let id: number | null = null;
       try {
         // Normally an ArrayBuffer. If the fast binary IPC is unavailable,
@@ -125,7 +140,8 @@
     throw new Error(`unexpected preview data (${typeof data})`);
   }
 
-  const aspect = $derived(display && display.height ? display.width / display.height : 16 / 9);
+  const source = $derived(windowMode ? window : display);
+  const aspect = $derived(source && source.height > 0 ? source.width / source.height : 16 / 9);
 </script>
 
 <div class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl border border-line bg-black">
@@ -146,6 +162,10 @@
       </div>
       <button class="rounded-lg border border-line-strong px-3 py-1.5 text-xs hover:bg-hover" onclick={() => setEnabled(true)}>Turn on preview</button>
     </div>
+  {:else if windowMode && !window}
+    <p class="absolute text-center text-muted">Choose a window to record<br /><span class="text-xs text-faint">in the Capture panel on the right</span></p>
+  {:else if windowMode && window?.minimized}
+    <p class="absolute text-center text-muted">“{window.title}” is minimized<br /><span class="text-xs text-faint">Restore it to see and record it</span></p>
   {:else if !hasFrame}
     <p class="absolute text-muted">{failed ? `Preview unavailable: ${failed}` : "Starting preview…"}</p>
   {/if}
@@ -161,7 +181,11 @@
       <span class="rounded-md bg-black/60 px-2 py-1 text-[11px] font-medium tracking-wide text-white/80 backdrop-blur">PREVIEW</span>
     {/if}
   </div>
-  {#if display}
+  {#if windowMode && window}
+    <span class="pointer-events-none absolute top-3 right-3 max-w-[60%] truncate rounded-md bg-black/60 px-2 py-1 text-[11px] text-white/80 backdrop-blur">
+      Window · {window.title} · {window.width}×{window.height}
+    </span>
+  {:else if !windowMode && display}
     <span class="pointer-events-none absolute top-3 right-3 rounded-md bg-black/60 px-2 py-1 text-[11px] text-white/80 backdrop-blur">
       Display {display.index} · {display.width}×{display.height} · {display.refresh_rate} Hz
     </span>

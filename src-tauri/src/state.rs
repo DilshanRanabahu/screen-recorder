@@ -29,6 +29,26 @@ pub struct Selection {
     pub microphone_id: Option<String>,
     /// Live preview in the studio (off saves CPU; recording is unaffected).
     pub preview: bool,
+    /// Record a whole display or a single window.
+    pub capture_mode: CaptureMode,
+    /// The window to record in `Window` mode. The id changes between runs, so the
+    /// UI re-finds the window by app and title after a restart.
+    pub window: Option<WindowChoice>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureMode {
+    #[default]
+    Screen,
+    Window,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WindowChoice {
+    pub id: u64,
+    pub title: String,
+    pub process: String,
 }
 
 impl Default for Selection {
@@ -40,6 +60,8 @@ impl Default for Selection {
             microphone: false,
             microphone_id: None,
             preview: true,
+            capture_mode: CaptureMode::Screen,
+            window: None,
         }
     }
 }
@@ -212,6 +234,7 @@ impl AppState {
     pub fn start_preview(
         &self,
         display: usize,
+        window: Option<u64>,
         max_width: u32,
         fps: u32,
         raw: bool,
@@ -230,7 +253,7 @@ impl AppState {
         let frames_in_flight = Arc::clone(&in_flight);
         let (mut sent, mut dropped, mut bytes, mut since) = (0u32, 0u32, 0usize, std::time::Instant::now());
         let (started, mut first_frame) = (std::time::Instant::now(), true);
-        let session = PreviewSession::start(display, max_width, fps.clamp(1, 60), encoding, move |frame| {
+        let session = PreviewSession::start(display, window, max_width, fps.clamp(1, 60), encoding, move |frame| {
             let in_flight = &frames_in_flight;
             if first_frame {
                 first_frame = false;
@@ -418,8 +441,18 @@ pub fn start_recording(app: &AppHandle) -> Result<(), String> {
     set_ui(app, UiState::Starting);
 
     let s = state.selection();
+    let window = match (s.capture_mode, &s.window) {
+        (CaptureMode::Screen, _) => None,
+        (CaptureMode::Window, Some(w)) => Some(w.id),
+        (CaptureMode::Window, None) => {
+            let ui = UiState::Idle { last: None, error: Some("Choose a window to record first.".into()) };
+            set_ui(app, ui);
+            return Err("Choose a window to record first.".into());
+        }
+    };
     let options = RecordOptions {
         display: s.display,
+        window,
         preset: s.preset,
         system_audio: s.system_audio,
         microphone: s.microphone,
@@ -436,6 +469,7 @@ pub fn start_recording(app: &AppHandle) -> Result<(), String> {
                 let ui = recording_state(&recorder);
                 *app.state::<AppState>().recorder.lock().unwrap() = Some(recorder);
                 set_view(&app, View::Pill);
+                watch_source_closed(&app);
                 ui
             }
             Err(e) => {
@@ -532,4 +566,24 @@ pub fn watch_audio_devices(app: &AppHandle) {
         Ok(watcher) => *app.state::<AppState>().device_watcher.lock().unwrap() = Some(watcher),
         Err(e) => tracing::warn!(error = %e, "audio device notifications unavailable; the mic list updates only on restart"),
     }
+}
+
+/// Stops and saves the recording if its window is closed (or its display is
+/// disconnected). Without this the video would keep repeating the last frame.
+fn watch_source_closed(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let closed = match app.state::<AppState>().recorder.lock().unwrap().as_ref() {
+                Some(r) => r.source_closed(),
+                None => return, // recording already stopped
+            };
+            if closed {
+                tracing::info!("recorded window closed; stopping the recording");
+                let _ = stop_recording(&app);
+                return;
+            }
+        }
+    });
 }

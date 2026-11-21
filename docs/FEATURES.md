@@ -16,7 +16,7 @@ The minimum needed to replace other recorders for daily work.
 
 ### Capture
 - [x] Full screen (choose a monitor)
-- [ ] Single window (follows the window as it moves)
+- [x] Single window: records only that window, even when covered or moved; picker lists open windows (cloaked/untitled ones hidden); remembered by app and title across restarts; recording stops and saves automatically if the window is closed
 - [ ] Custom region (drag to select, with the size shown while dragging)
 - [x] Cursor included (option to hide it exists in the engine, not yet in the UI)
 

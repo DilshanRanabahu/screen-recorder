@@ -32,6 +32,12 @@ pub fn list_displays() -> Result<Vec<Display>, String> {
     recorder_core::list_displays().map_err(|e| e.to_string())
 }
 
+/// Windows that can be recorded (front-most first). Excludes this app.
+#[tauri::command]
+pub async fn list_windows() -> Result<Vec<recorder_core::WindowInfo>, String> {
+    recorder_core::list_windows().map_err(|e| e.to_string())
+}
+
 /// Async so it runs on a worker thread: WASAPI must not change the main
 /// (UI) thread's COM mode.
 #[tauri::command]
@@ -60,12 +66,13 @@ pub fn set_monitoring(state: State<'_, AppState>, on: bool) {
 pub async fn start_preview(
     state: State<'_, AppState>,
     display: usize,
+    window: Option<u64>,
     max_width: u32,
     fps: u32,
     raw: bool,
     channel: Channel<InvokeResponseBody>,
 ) -> Result<u32, String> {
-    state.start_preview(display, max_width, fps, raw, channel).map_err(|e| e.to_string())
+    state.start_preview(display, window, max_width, fps, raw, channel).map_err(|e| e.to_string())
 }
 
 /// Stops preview session `id`; ignored if a newer session has replaced it.

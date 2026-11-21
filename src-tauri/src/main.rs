@@ -35,6 +35,7 @@ fn main() {
             commands::ui_info,
             commands::list_displays,
             commands::list_microphones,
+            commands::list_windows,
             commands::get_levels,
             commands::set_monitoring,
             commands::start_preview,

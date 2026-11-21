@@ -68,6 +68,9 @@ impl QualityPreset {
 pub struct RecordOptions {
     /// One-based monitor index (see [`crate::list_displays`]).
     pub display: usize,
+    /// Record this window (an id from [`crate::list_windows`]) instead of the
+    /// display. The video size is the window size when recording starts.
+    pub window: Option<u64>,
     pub preset: QualityPreset,
     /// Include the mouse pointer.
     pub capture_cursor: bool,
@@ -87,6 +90,7 @@ impl Default for RecordOptions {
     fn default() -> Self {
         Self {
             display: 1,
+            window: None,
             preset: QualityPreset::default(),
             capture_cursor: true,
             system_audio: true,

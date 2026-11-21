@@ -6,6 +6,9 @@ pub enum RecorderError {
     #[error("display {0} was not found")]
     DisplayNotFound(usize),
 
+    #[error("the selected window is no longer open")]
+    WindowNotFound,
+
     #[error("could not list displays: {0}")]
     Displays(String),
 

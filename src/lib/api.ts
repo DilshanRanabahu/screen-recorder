@@ -5,6 +5,24 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 export type Preset = "standard" | "high" | "maximum";
 export type AudioTrack = "system" | "microphone";
 export type View = "studio" | "pill";
+export type CaptureMode = "screen" | "window";
+
+/** A window that can be recorded (from `list_windows`). */
+export interface WindowInfo {
+  id: number;
+  title: string;
+  process: string;
+  width: number;
+  height: number;
+  minimized: boolean;
+}
+
+/** The chosen window, saved in settings (the id changes between runs). */
+export interface WindowChoice {
+  id: number;
+  title: string;
+  process: string;
+}
 
 export interface Display {
   index: number;
@@ -59,6 +77,8 @@ export interface Selection {
   microphone_id: string | null;
   /** Live preview in the studio (off saves CPU). */
   preview: boolean;
+  capture_mode: CaptureMode;
+  window: WindowChoice | null;
 }
 
 export interface UiInfo {
@@ -71,6 +91,7 @@ export const api = {
   uiInfo: () => invoke<UiInfo>("ui_info"),
   displays: () => invoke<Display[]>("list_displays"),
   microphones: () => invoke<AudioDevice[]>("list_microphones"),
+  windows: () => invoke<WindowInfo[]>("list_windows"),
   levels: () => invoke<[number, number]>("get_levels"),
   setMonitoring: (on: boolean) => invoke<void>("set_monitoring", { on }),
   recordings: (limit: number) => invoke<RecordingFile[]>("list_recordings", { limit }),
@@ -95,10 +116,17 @@ export const api = {
    * Resolves to the session id. Each message:
    * `[encoding u8: 0 = JPEG, 1 = RGBA][width u32 LE][height u32 LE][session id u32 LE][data…]`.
    */
-  startPreview(display: number, maxWidth: number, fps: number, raw: boolean, onFrame: (msg: unknown) => void) {
+  startPreview(
+    display: number,
+    window: number | null,
+    maxWidth: number,
+    fps: number,
+    raw: boolean,
+    onFrame: (msg: unknown) => void,
+  ) {
     const channel = new Channel<unknown>();
     channel.onmessage = onFrame;
-    return invoke<number>("start_preview", { display, maxWidth, fps, raw, channel });
+    return invoke<number>("start_preview", { display, window, maxWidth, fps, raw, channel });
   },
   /** Stops preview session `id`; a stop for an older session is ignored. */
   stopPreview: (id: number) => invoke<void>("stop_preview_session", { id }),

@@ -30,9 +30,10 @@ use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandle
 use windows_capture::frame::Frame;
 use windows_capture::graphics_capture_api::InternalCaptureControl;
 use windows_capture::monitor::Monitor;
+use windows_capture::window::Window;
 use windows_capture::settings::{
-    ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings, MinimumUpdateIntervalSettings,
-    SecondaryWindowSettings, Settings,
+    ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings, GraphicsCaptureItemType,
+    MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
 };
 
 use crate::RecorderError;
@@ -344,12 +345,18 @@ impl PreviewSession {
     /// delivers frames when the screen changes, so a still screen sends none.
     pub fn start(
         display: usize,
+        window: Option<u64>,
         max_width: u32,
         fps: u32,
         encoding: PreviewEncoding,
         on_frame: impl FnMut(PreviewFrame<'_>) + Send + 'static,
     ) -> Result<Self, RecorderError> {
-        let monitor = Monitor::from_index(display).map_err(|_| RecorderError::DisplayNotFound(display))?;
+        // Resolve the source first, so a bad display or closed window fails fast.
+        let monitor = match window {
+            Some(id) if crate::window_exists(id) => None,
+            Some(_) => return Err(RecorderError::WindowNotFound),
+            None => Some(Monitor::from_index(display).map_err(|_| RecorderError::DisplayNotFound(display))?),
+        };
         let min_interval_us = Arc::new(AtomicU64::new(interval_us(fps)));
         let slot = Arc::new(Slot::default());
 
@@ -360,24 +367,16 @@ impl PreviewSession {
             .spawn(move || encode_loop(&encoder_slot, encoding, 72, on_frame))
             .map_err(|e| RecorderError::Capture(format!("preview encoder: {e}")))?;
 
-        let settings = Settings::new(
-            monitor,
-            CursorCaptureSettings::WithCursor,
-            DrawBorderSettings::WithoutBorder,
-            SecondaryWindowSettings::Default,
-            // Windows may deliver up to 60 fps; the handler applies the current limit.
-            MinimumUpdateIntervalSettings::Custom(Duration::from_secs(1) / 60),
-            DirtyRegionSettings::Default,
-            // RGBA, so raw frames go straight into an ImageData with no swizzle.
-            ColorFormat::Rgba8,
-            Config { max_width: max_width.max(64), min_interval_us: Arc::clone(&min_interval_us), slot: Arc::clone(&slot) },
-        );
+        let config =
+            Config { max_width: max_width.max(64), min_interval_us: Arc::clone(&min_interval_us), slot: Arc::clone(&slot) };
         let mut session = Self { control: None, encoder: Some(encoder), slot, min_interval_us };
-        session.control = Some(
-            Handler::start_free_threaded(settings).map_err(|e| RecorderError::Capture(format!("preview: {e:?}")))?,
-        );
+        session.control = Some(match (monitor, window) {
+            (Some(monitor), _) => start_capture(monitor, config)?,
+            (None, Some(id)) => start_capture(Window::from_raw_hwnd(id as *mut _), config)?,
+            (None, None) => unreachable!("a display or a window is always chosen above"),
+        });
         let display_index = display;
-        debug!(display_index, max_width, fps, "preview started");
+        debug!(display_index, ?window, max_width, fps, "preview started");
         Ok(session)
     }
 
@@ -489,4 +488,24 @@ mod wic {
             }
         }
     }
+}
+
+/// Starts the preview capture for a monitor or a window.
+fn start_capture<T: TryInto<GraphicsCaptureItemType> + Send + 'static>(
+    item: T,
+    config: Config,
+) -> Result<CaptureControl<Handler, HandlerError>, RecorderError> {
+    let settings = Settings::new(
+        item,
+        CursorCaptureSettings::WithCursor,
+        DrawBorderSettings::WithoutBorder,
+        SecondaryWindowSettings::Default,
+        // Windows may deliver up to 60 fps; the handler applies the current limit.
+        MinimumUpdateIntervalSettings::Custom(Duration::from_secs(1) / 60),
+        DirtyRegionSettings::Default,
+        // RGBA, so raw frames go straight into an ImageData with no swizzle.
+        ColorFormat::Rgba8,
+        config,
+    );
+    Handler::start_free_threaded(settings).map_err(|e| RecorderError::Capture(format!("preview: {e:?}")))
 }

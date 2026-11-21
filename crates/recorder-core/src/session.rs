@@ -22,8 +22,9 @@ use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandle
 use windows_capture::frame::Frame;
 use windows_capture::graphics_capture_api::InternalCaptureControl;
 use windows_capture::monitor::Monitor;
+use windows_capture::window::Window;
 use windows_capture::settings::{
-    ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
+    ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings, GraphicsCaptureItemType,
     MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
 };
 
@@ -44,6 +45,8 @@ struct Shared {
     /// Set once the encoder is ready (or failed to start).
     ready: OnceLock<Result<(), String>>,
     screen_updates: AtomicU64,
+    /// The captured window (or display) went away.
+    source_closed: AtomicBool,
 }
 
 /// D3D11 objects handed to the capture thread.
@@ -131,7 +134,8 @@ impl GraphicsCaptureApiHandler for Handler {
     }
 
     fn on_closed(&mut self) -> Result<(), Self::Error> {
-        warn!("capture item closed (display disconnected?)");
+        warn!("capture source closed (window closed or display disconnected)");
+        self.config.shared.source_closed.store(true, Ordering::Relaxed);
         Ok(())
     }
 }
@@ -139,6 +143,34 @@ impl GraphicsCaptureApiHandler for Handler {
 /// Placeholder so `Flags` can carry future per-session D3D options.
 #[derive(Default)]
 struct D3DSlot;
+
+/// What is being recorded.
+enum Source {
+    Display(Monitor),
+    Window(Window),
+}
+
+/// Starts Windows.Graphics.Capture for a monitor or a window.
+fn start_capture<T: TryInto<GraphicsCaptureItemType> + Send + 'static>(
+    item: T,
+    cursor: bool,
+    fps: u32,
+    config: HandlerConfig,
+) -> Result<CaptureControl<Handler, HandlerError>, RecorderError> {
+    let settings = Settings::new(
+        item,
+        if cursor { CursorCaptureSettings::WithCursor } else { CursorCaptureSettings::WithoutCursor },
+        // Windows 11 lets us hide the yellow capture border.
+        DrawBorderSettings::WithoutBorder,
+        SecondaryWindowSettings::Default,
+        // No point capturing faster than we encode.
+        MinimumUpdateIntervalSettings::Custom(Duration::from_secs(1) / fps),
+        DirtyRegionSettings::Default,
+        ColorFormat::Bgra8,
+        (config, D3DSlot),
+    );
+    Handler::start_free_threaded(settings).map_err(|e| RecorderError::Capture(format!("{e:?}")))
+}
 
 /// Result of a finished recording.
 #[derive(Debug, Clone, Serialize)]
@@ -176,8 +208,14 @@ pub struct Recorder {
 impl Recorder {
     /// Starts recording and returns once the encoder is running.
     pub fn start(options: RecordOptions) -> Result<Self, RecorderError> {
-        let monitor = Monitor::from_index(options.display)
-            .map_err(|_| RecorderError::DisplayNotFound(options.display))?;
+        // Check the source before opening any devices.
+        let source = match options.window {
+            Some(id) if crate::window_exists(id) => Source::Window(Window::from_raw_hwnd(id as *mut _)),
+            Some(_) => return Err(RecorderError::WindowNotFound),
+            None => Source::Display(
+                Monitor::from_index(options.display).map_err(|_| RecorderError::DisplayNotFound(options.display))?,
+            ),
+        };
 
         std::fs::create_dir_all(&options.output_dir).map_err(|source| RecorderError::OutputDir {
             path: options.output_dir.clone(),
@@ -191,6 +229,7 @@ impl Recorder {
             clock: Arc::new(MediaClock::default()),
             ready: OnceLock::new(),
             screen_updates: AtomicU64::new(0),
+            source_closed: AtomicBool::new(false),
         });
 
         // Audio first: the devices start buffering while the encoder spins up,
@@ -219,31 +258,16 @@ impl Recorder {
         let warnings = audio.warnings.clone();
 
         let fps = options.preset.fps();
-        let settings = Settings::new(
-            monitor,
-            if options.capture_cursor {
-                CursorCaptureSettings::WithCursor
-            } else {
-                CursorCaptureSettings::WithoutCursor
-            },
-            // Windows 11 lets us hide the yellow capture border.
-            DrawBorderSettings::WithoutBorder,
-            SecondaryWindowSettings::Default,
-            // No point capturing faster than we encode.
-            MinimumUpdateIntervalSettings::Custom(Duration::from_secs(1) / fps),
-            DirtyRegionSettings::Default,
-            ColorFormat::Bgra8,
-            (
-                HandlerConfig {
-                    path: path.clone(),
-                    preset: options.preset,
-                    tracks: tracks.clone(),
-                    shared: Arc::clone(&shared),
-                },
-                D3DSlot,
-            ),
-        );
-        let control = Handler::start_free_threaded(settings).map_err(|e| RecorderError::Capture(format!("{e:?}")))?;
+        let config = HandlerConfig {
+            path: path.clone(),
+            preset: options.preset,
+            tracks: tracks.clone(),
+            shared: Arc::clone(&shared),
+        };
+        let control = match source {
+            Source::Display(monitor) => start_capture(monitor, options.capture_cursor, fps, config)?,
+            Source::Window(window) => start_capture(window, options.capture_cursor, fps, config)?,
+        };
 
         let pacer_stop = Arc::new(AtomicBool::new(false));
         let pacer_stats = Arc::new(PacerStats::default());
@@ -342,6 +366,13 @@ impl Recorder {
     }
 
     /// Problems so far that didn't stop the recording.
+    /// True once the recorded window was closed (or the display disconnected).
+    /// The app should then stop the recording; the video just repeats the last
+    /// frame from that point.
+    pub fn source_closed(&self) -> bool {
+        self.shared.source_closed.load(Ordering::Relaxed)
+    }
+
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
@@ -399,7 +430,13 @@ impl Recorder {
             dropped_frames,
             bytes,
             audio_tracks: self.tracks.clone(),
-            warnings: self.warnings.clone(),
+            warnings: {
+                let mut w = self.warnings.clone();
+                if self.source_closed() {
+                    w.push("The recorded window was closed, so the recording was stopped and saved.".into());
+                }
+                w
+            },
         })
     }
 }

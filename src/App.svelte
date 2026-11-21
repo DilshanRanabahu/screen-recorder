@@ -13,6 +13,7 @@
     formatBytes,
     formatClock,
     type AudioDevice,
+    type WindowInfo,
     type Display,
     type RecorderState,
     type RecordingFile,
@@ -24,6 +25,7 @@
   let view = $state<View>("studio");
   let displays = $state<Display[]>([]);
   let mics = $state<AudioDevice[]>([]);
+  let windows = $state<WindowInfo[]>([]);
   let recent = $state<RecordingFile[]>([]);
   let freeBytes = $state<number | null>(null);
   let selection = $state<Selection>({
@@ -33,6 +35,8 @@
     microphone: false,
     microphone_id: null,
     preview: true,
+    capture_mode: "screen",
+    window: null,
   });
   let onBattery = $state(false);
   let hotkey = $state("Ctrl+Alt+R");
@@ -50,6 +54,29 @@
   // False while minimized or hidden: preview and idle meters pause.
   const active = $derived(!minimized && !hidden && view === "studio");
   const display = $derived(displays.find((d) => d.index === selection.display) ?? displays[0]);
+  const windowMode = $derived(selection.capture_mode === "window");
+  // The chosen window, if it is still open.
+  const chosenWindow = $derived(windows.find((w) => w.id === selection.window?.id));
+
+  /// Re-reads the open windows. Window ids change when an app restarts, so a
+  /// saved window that is gone is matched again by app + title, then by app.
+  async function refreshWindows() {
+    windows = await api.windows().catch(() => windows);
+    const saved = selection.window;
+    if (!saved || windows.some((w) => w.id === saved.id)) return;
+    const match =
+      windows.find((w) => w.process === saved.process && w.title === saved.title) ??
+      windows.find((w) => w.process === saved.process);
+    if (match) update({ window: { id: match.id, title: match.title, process: match.process } });
+  }
+
+  // Keep the window list fresh while Window mode is on screen.
+  $effect(() => {
+    if (!windowMode || !active || rec.status !== "idle") return;
+    refreshWindows();
+    const timer = setInterval(refreshWindows, 3000);
+    return () => clearInterval(timer);
+  });
 
   function toast(t: Omit<ToastData, "id">) {
     toasts = [...toasts.slice(-2), { ...t, id: nextToast++ }];
@@ -237,6 +264,8 @@
       <section class="flex min-w-0 flex-1 flex-col gap-3">
         <Preview
           {display}
+          window={chosenWindow}
+          {windowMode}
           {rec}
           {elapsed}
           {active}
@@ -246,9 +275,9 @@
         />
         <Mixer {selection} {mics} {levels} {rec} {update} />
       </section>
-      <SidePanel {selection} {displays} {recent} {rec} {update} open={openRecording} />
+      <SidePanel {selection} {displays} {windows} {refreshWindows} {recent} {rec} {update} open={openRecording} />
     </div>
-    <ControlBar {rec} {elapsed} {selection} {display} {freeBytes} {hotkey} {pauseHotkey} {run} />
+    <ControlBar {rec} {elapsed} {selection} {display} window={windowMode ? chosenWindow : undefined} {freeBytes} {hotkey} {pauseHotkey} {run} />
   </div>
 
   <div class="pointer-events-none fixed right-4 bottom-[92px] flex flex-col items-end gap-2">

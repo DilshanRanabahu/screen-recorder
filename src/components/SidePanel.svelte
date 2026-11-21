@@ -1,11 +1,25 @@
 <script lang="ts">
-  import { api, formatBytes, formatWhen, presets, type Display, type Preset, type RecorderState, type RecordingFile, type Selection } from "../lib/api";
+  import {
+    api,
+    formatBytes,
+    formatWhen,
+    presets,
+    type CaptureMode,
+    type Display,
+    type Preset,
+    type RecorderState,
+    type RecordingFile,
+    type Selection,
+    type WindowInfo,
+  } from "../lib/api";
   import type { IconName } from "../lib/icons";
   import Icon from "./Icon.svelte";
 
   let {
     selection,
     displays,
+    windows,
+    refreshWindows,
     recent,
     rec,
     update,
@@ -13,6 +27,9 @@
   }: {
     selection: Selection;
     displays: Display[];
+    /** Open windows, refreshed while Window mode is shown. */
+    windows: WindowInfo[];
+    refreshWindows: () => void;
     recent: RecordingFile[];
     rec: RecorderState;
     update: (patch: Partial<Selection>) => void;
@@ -21,11 +38,18 @@
   } = $props();
 
   const locked = $derived(rec.status !== "idle");
-  const modes: { name: string; icon: IconName; ready: boolean }[] = [
-    { name: "Screen", icon: "monitor", ready: true },
-    { name: "Window", icon: "window", ready: false },
-    { name: "Region", icon: "region", ready: false },
+  const modes: { name: string; mode: CaptureMode | null; icon: IconName }[] = [
+    { name: "Screen", mode: "screen", icon: "monitor" },
+    { name: "Window", mode: "window", icon: "window" },
+    { name: "Region", mode: null, icon: "region" },
   ];
+  // The chosen window, if it is still open.
+  const chosenWindow = $derived(windows.find((w) => w.id === selection.window?.id));
+
+  function pickWindow(id: number) {
+    const w = windows.find((x) => x.id === id);
+    update({ window: w ? { id: w.id, title: w.title, process: w.process } : null });
+  }
 </script>
 
 {#snippet heading(text: string)}
@@ -39,37 +63,70 @@
     {@render heading("Capture")}
     <div class="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="Capture mode">
       {#each modes as m (m.name)}
+        {@const active = m.mode === selection.capture_mode}
         <button
           role="radio"
-          aria-checked={m.ready}
-          disabled={!m.ready || locked}
-          title={m.ready ? m.name : `${m.name}: coming soon`}
-          class="relative flex flex-col items-center gap-1.5 rounded-lg border py-2.5 text-xs transition-colors {m.ready
+          aria-checked={active}
+          disabled={!m.mode || locked}
+          title={m.mode ? m.name : `${m.name}: coming soon`}
+          class="relative flex flex-col items-center gap-1.5 rounded-lg border py-2.5 text-xs transition-colors disabled:cursor-default {active
             ? 'border-accent/60 bg-accent-soft text-fg'
-            : 'border-line text-faint'}"
+            : m.mode
+              ? 'border-line text-muted hover:border-line-strong hover:bg-raised hover:text-fg'
+              : 'border-line text-faint'} {locked && !active ? 'opacity-50' : ''}"
+          onclick={() => m.mode && update({ capture_mode: m.mode })}
         >
           <Icon name={m.icon} size={18} />
           {m.name}
-          {#if !m.ready}
+          {#if !m.mode}
             <span class="absolute -top-1.5 right-1 rounded bg-raised px-1 text-[9px] text-muted">SOON</span>
           {/if}
         </button>
       {/each}
     </div>
 
-    <label class="mt-3 block">
-      <span class="mb-1 block text-[11px] text-faint">Display</span>
-      <select
-        class="h-9 w-full cursor-pointer rounded-lg border border-line bg-raised px-3 hover:border-line-strong disabled:cursor-default disabled:opacity-60"
-        disabled={locked}
-        value={selection.display}
-        onchange={(e) => update({ display: Number(e.currentTarget.value) })}
-      >
-        {#each displays as d (d.index)}
-          <option value={d.index}>Display {d.index}{d.name ? ` · ${d.name}` : ""} · {d.width}×{d.height}</option>
-        {/each}
-      </select>
-    </label>
+    {#if selection.capture_mode === "window"}
+      <div class="mt-3">
+        <div class="mb-1 flex items-center justify-between text-[11px] text-faint">
+          <label for="window-picker">Window</label>
+          <button class="text-accent hover:underline disabled:opacity-50" disabled={locked} onclick={refreshWindows}>Refresh</button>
+        </div>
+        <select
+          id="window-picker"
+          class="h-9 w-full cursor-pointer truncate rounded-lg border border-line bg-raised px-3 hover:border-line-strong disabled:cursor-default disabled:opacity-60"
+          disabled={locked}
+          value={chosenWindow?.id ?? ""}
+          onfocus={refreshWindows}
+          onchange={(e) => pickWindow(Number(e.currentTarget.value))}
+        >
+          {#if !chosenWindow}
+            <option value="" disabled>{selection.window ? `${selection.window.title} (closed)` : "Choose a window…"}</option>
+          {/if}
+          {#each windows as w (w.id)}
+            <option value={w.id}>{w.title} — {w.process.replace(/\.exe$/i, "")}{w.minimized ? " (minimized)" : ""}</option>
+          {/each}
+        </select>
+        {#if chosenWindow?.minimized}
+          <p class="mt-1 text-[11px] text-paused">Minimized: it records once you restore it.</p>
+        {:else if chosenWindow}
+          <p class="mt-1 text-[11px] text-faint">Records only this window, even when it's covered or moved.</p>
+        {/if}
+      </div>
+    {:else}
+      <label class="mt-3 block">
+        <span class="mb-1 block text-[11px] text-faint">Display</span>
+        <select
+          class="h-9 w-full cursor-pointer rounded-lg border border-line bg-raised px-3 hover:border-line-strong disabled:cursor-default disabled:opacity-60"
+          disabled={locked}
+          value={selection.display}
+          onchange={(e) => update({ display: Number(e.currentTarget.value) })}
+        >
+          {#each displays as d (d.index)}
+            <option value={d.index}>Display {d.index}{d.name ? ` · ${d.name}` : ""} · {d.width}×{d.height}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
   </section>
 
   <!-- Quality -->

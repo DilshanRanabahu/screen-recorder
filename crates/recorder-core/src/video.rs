@@ -15,7 +15,7 @@ use std::time::Duration;
 use tracing::{debug, warn};
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
-    ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
+    ID3D11Device, ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_SAMPLE_DESC};
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
@@ -30,6 +30,8 @@ const NONE: usize = usize::MAX;
 /// GPU textures holding the most recent captured frames.
 pub struct FrameRing {
     textures: Vec<ID3D11Texture2D>,
+    /// One render-target view per texture, used to clear a slot to black.
+    views: Vec<ID3D11RenderTargetView>,
     next: AtomicUsize,
     latest: AtomicUsize,
     width: u32,
@@ -56,13 +58,19 @@ impl FrameRing {
             MiscFlags: 0,
         };
         let mut textures = Vec::with_capacity(RING_SIZE);
+        let mut views = Vec::with_capacity(RING_SIZE);
         for _ in 0..RING_SIZE {
             let mut texture = None;
             unsafe { device.CreateTexture2D(&desc, None, Some(&mut texture)) }
                 .map_err(|e| RecorderError::Capture(format!("create frame texture: {e}")))?;
-            textures.push(texture.ok_or_else(|| RecorderError::Capture("no texture".into()))?);
+            let texture = texture.ok_or_else(|| RecorderError::Capture("no texture".into()))?;
+            let mut view = None;
+            unsafe { device.CreateRenderTargetView(&texture, None, Some(&mut view)) }
+                .map_err(|e| RecorderError::Capture(format!("create frame view: {e}")))?;
+            views.push(view.ok_or_else(|| RecorderError::Capture("no view".into()))?);
+            textures.push(texture);
         }
-        Ok(Self { textures, next: AtomicUsize::new(0), latest: AtomicUsize::new(NONE), width, height })
+        Ok(Self { textures, views, next: AtomicUsize::new(0), latest: AtomicUsize::new(NONE), width, height })
     }
 
     /// Copies a captured frame into the next slot (GPU copy). Capture thread only.
@@ -77,7 +85,14 @@ impl FrameRing {
             bottom: src_height.min(self.height),
             back: 1,
         };
-        unsafe { context.CopySubresourceRegion(&self.textures[slot], 0, 0, 0, 0, src, 0, Some(&region)) };
+        unsafe {
+            // A window that got smaller than the video would otherwise leave
+            // pixels of older, larger frames around it: clear to black first.
+            if src_width < self.width || src_height < self.height {
+                context.ClearRenderTargetView(&self.views[slot], &[0.0, 0.0, 0.0, 1.0]);
+            }
+            context.CopySubresourceRegion(&self.textures[slot], 0, 0, 0, 0, src, 0, Some(&region));
+        }
         self.latest.store(slot, Ordering::Release);
     }
 

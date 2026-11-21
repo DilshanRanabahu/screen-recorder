@@ -4,11 +4,12 @@
 //! cargo run --release -p recorder-core --example record            # 5 s, High preset
 //! cargo run --release -p recorder-core --example record -- 10 max  # 10 s, Maximum preset
 //! cargo run --release -p recorder-core --example record -- 5 high mic  # + default microphone
+//! cargo run --release -p recorder-core --example record -- 5 high window  # front-most window
 //! ```
 
 use std::time::Duration;
 
-use recorder_core::{QualityPreset, RecordOptions, Recorder, list_displays, list_microphones};
+use recorder_core::{QualityPreset, RecordOptions, Recorder, list_displays, list_microphones, list_windows};
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -24,7 +25,20 @@ fn main() -> anyhow::Result<()> {
         Some("max" | "maximum") => QualityPreset::Maximum,
         _ => QualityPreset::High,
     };
-    let microphone = args.next().as_deref() == Some("mic");
+    let rest: Vec<String> = args.collect();
+    let microphone = rest.iter().any(|a| a == "mic");
+    // "window": record the front-most window instead of display 1.
+    let window = if rest.iter().any(|a| a == "window") {
+        let windows = list_windows()?;
+        for w in windows.iter().take(8) {
+            println!("window: {} | {} | {}x{}{}", w.title, w.process, w.width, w.height, if w.minimized { " (minimized)" } else { "" });
+        }
+        let w = windows.iter().find(|w| !w.minimized).ok_or_else(|| anyhow::anyhow!("no window to record"))?;
+        println!("recording window: {} ({}x{})", w.title, w.width, w.height);
+        Some(w.id)
+    } else {
+        None
+    };
 
     for d in list_displays()? {
         println!("display {}: {} {}x{} @ {} Hz", d.index, d.name, d.width, d.height, d.refresh_rate);
@@ -33,7 +47,7 @@ fn main() -> anyhow::Result<()> {
         println!("microphone: {}{}", m.name, if m.is_default { " (default)" } else { "" });
     }
 
-    let recorder = Recorder::start(RecordOptions { preset, microphone, ..Default::default() })?;
+    let recorder = Recorder::start(RecordOptions { preset, microphone, window, ..Default::default() })?;
     println!("recording {seconds} s to {} ...", recorder.path().display());
     std::thread::sleep(Duration::from_secs(seconds));
 

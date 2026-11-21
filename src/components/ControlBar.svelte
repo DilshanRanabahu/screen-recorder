@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, bitrate, formatBytes, formatClock, presets, type Display, type RecorderState, type Selection } from "../lib/api";
+  import { api, bitrate, formatBytes, formatClock, presets, type Display, type RecorderState, type Selection, type WindowInfo } from "../lib/api";
   import Icon from "./Icon.svelte";
 
   let {
@@ -7,6 +7,7 @@
     elapsed,
     selection,
     display,
+    window,
     freeBytes,
     hotkey,
     pauseHotkey,
@@ -16,6 +17,8 @@
     elapsed: number;
     selection: Selection;
     display: Display | undefined;
+    /** Set in Window mode: the video size is the window size. */
+    window?: WindowInfo;
     freeBytes: number | null;
     hotkey: string;
     pauseHotkey: string;
@@ -25,8 +28,9 @@
   const recording = $derived(rec.status === "recording" ? rec : null);
   const busy = $derived(rec.status === "starting" || rec.status === "stopping");
   const preset = $derived(presets[selection.preset]);
-  const w = $derived((display?.width ?? 1920) & ~1);
-  const h = $derived((display?.height ?? 1080) & ~1);
+  const source = $derived(window ?? display);
+  const w = $derived((source?.width ?? 1920) & ~1);
+  const h = $derived((source?.height ?? 1080) & ~1);
   const videoBps = $derived(bitrate(selection.preset, w, h));
   const audioTracks = $derived((selection.system_audio ? 1 : 0) + (selection.microphone ? 1 : 0));
   const bytesPerHour = $derived(((videoBps + audioTracks * 192_000) / 8) * 3600);

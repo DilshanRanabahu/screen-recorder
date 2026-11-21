@@ -111,7 +111,7 @@ Default 1120×700 (logical px), resizable, minimum 880×580. Custom title bar (n
 | Title bar | `TitleBar.svelte` | Drag to move, double-click to maximize. Status chip: *Ready* (green), *REC 00:12* (red, pulsing), *Paused* (amber), *Starting…/Saving…*. Buttons: recordings folder, minimize, maximize, hide to tray. |
 | Preview | `Preview.svelte` | Live GPU-scaled preview of the selected display: 30 fps (20 while recording), stopped when minimized. Badge top-left (PREVIEW / REC / PAUSED), display info top-right, measured preview fps bottom-right, red or amber frame while recording. |
 | Audio mixer | `Mixer.svelte`, `Meter.svelte` | One strip per source: icon, name, device (mic picker), live dB readout, on/off switch, horizontal meter on a −60…0 dBFS scale with green/yellow/red zones (−20 / −9 dB) and a 1 s peak-hold tick. Works before recording (mic check); sources lock while recording because each is a track in the file. |
-| Capture | `SidePanel.svelte` | Mode cards (Window and Region marked *Soon*), display picker. Locked while recording. |
+| Capture | `SidePanel.svelte` | Mode cards: Screen, Window, Region (*Soon*). Screen shows the display picker; Window shows the window picker (see *Window capture*). Locked while recording. |
 | Quality | `SidePanel.svelte` | Three radio cards with purpose hint and fps/codec. |
 | Recent recordings | `SidePanel.svelte` | Up to 50 newest files in the output folder (relative date, size), with a count badge. Hover: Play, Show in folder. The list has its **own scroll area**: a slim scrollbar appears only when the list overflows, and scrolling stays inside the box (`overscroll-behavior: contain`) while the heading, Capture and Quality stay fixed. The box takes the remaining panel height (minimum 112 px), so the side panel itself does not scroll at the default window size. **Updates in real time** when files are added, renamed, moved or deleted, including in Explorer (`watcher.rs`); also re-read when the window regains focus. Opening a file that no longer exists shows an error toast and refreshes the list. |
 | Control bar | `ControlBar.svelte` | Big record button (circle → square while recording, spinner while starting/saving), pause/resume, large monospace timer, stat chips, free disk space and estimated GB/hour and hours left. While recording, a *compact* button switches to the pill. |
@@ -302,6 +302,16 @@ The remaining cost is mostly WebView2 receiving and drawing frames (≈8%). Idea
 ### Level meters
 
 Peak levels are measured in the WASAPI capture threads. While idle, an `AudioMeter` opens the enabled devices only while the studio is visible (`set_monitoring`), and is closed before a recording opens them. The frontend polls `get_levels` every 100 ms, only when a source is enabled and the window isn't minimized.
+
+### Window capture
+
+- **Picker:** Capture → Window shows a dropdown of open windows (`list_windows`): visible, titled, not cloaked (suspended UWP apps), excluding this app. Front-most first; minimized windows are marked and record once restored. The list refreshes every 3 s while Window mode is shown, when the dropdown is focused, and via **Refresh**.
+- **Remembered:** the choice is saved as id + app + title. Ids change when an app restarts, so a missing id is matched again by app + title, then by app.
+- **Recording:** Windows.Graphics.Capture records only that window, even when it is covered or moved. The video size is the window's visible size (DWM extended frame bounds) when recording starts; if the window gets smaller, the rest of the frame is cleared to black (no ghosting), and if it gets larger it is cropped.
+- **Window closed:** the recording stops and saves automatically within ≈0.3 s, with a "the recorded window was closed" notice. Starting with a window that is already closed shows an error.
+- Preview, size chip and bitrate follow the window.
+
+Tested: VS Code window (1920×1032), a test window recorded at 982×616 and closed mid-recording (stopped and saved in 0.26 s, file decodes cleanly), re-matching after the window id changed.
 
 ### Microphones (plug and play)
 
