@@ -22,6 +22,9 @@
   const locked = $derived(rec.status !== "idle");
   const systemDb = $derived(toDb(levels.system));
   const micDb = $derived(toDb(levels.microphone));
+  const defaultMic = $derived(mics.find((m) => m.is_default));
+  // A remembered microphone that is currently unplugged.
+  const missingMic = $derived(!!selection.microphone_id && !mics.some((m) => m.id === selection.microphone_id));
   const fmt = (db: number) => (Number.isFinite(db) && db > -60 ? `${db.toFixed(0)} dB` : "-∞");
 </script>
 
@@ -63,10 +66,14 @@
             value={selection.microphone_id ?? ""}
             onchange={(e) => update({ microphone_id: e.currentTarget.value || null })}
           >
-            <option value="">Windows default</option>
+            <option value="">Windows default{defaultMic ? ` · ${defaultMic.name}` : ""}</option>
             {#each mics as m (m.id)}
-              <option value={m.id}>{m.name}</option>
+              <option value={m.id}>{m.name}{m.is_default ? " (default)" : ""}</option>
             {/each}
+            {#if missingMic}
+              <!-- The saved choice is unplugged: keep it selected so it comes back when reconnected. -->
+              <option value={selection.microphone_id}>Saved microphone (not connected)</option>
+            {/if}
           </select>
         </div>
         <span class="w-14 text-right font-mono text-[11px] whitespace-nowrap text-muted tabular-nums">{selection.microphone ? fmt(micDb) : "off"}</span>

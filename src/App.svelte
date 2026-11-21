@@ -55,6 +55,45 @@
     toasts = [...toasts.slice(-2), { ...t, id: nextToast++ }];
   }
 
+  /// Re-reads the microphone list after a device was plugged in or out, and
+  /// tells the user what changed.
+  async function refreshMics() {
+    const before = mics;
+    const after = await api.microphones().catch(() => before);
+    mics = after;
+    if (before.length === 0 && after.length === 0) return;
+
+    const added = after.filter((m) => !before.some((b) => b.id === m.id));
+    const removed = before.filter((m) => !after.some((a) => a.id === m.id));
+    const recordingMic = rec.status === "recording" && rec.tracks.includes("microphone");
+
+    for (const m of added) {
+      const alreadyUsing = selection.microphone && selection.microphone_id === m.id;
+      toast({
+        kind: "success",
+        title: "Microphone connected",
+        detail: m.name,
+        action:
+          alreadyUsing || rec.status !== "idle"
+            ? undefined
+            : { label: "Use this microphone", run: () => update({ microphone: true, microphone_id: m.id }) },
+      });
+    }
+    for (const m of removed) {
+      const wasChosen = selection.microphone && (selection.microphone_id === m.id || (!selection.microphone_id && m.is_default));
+      if (!wasChosen) continue;
+      toast({
+        kind: "warning",
+        title: "Microphone disconnected",
+        detail: recordingMic
+          ? `${m.name} was unplugged. The microphone track stays silent for the rest of this recording.`
+          : selection.microphone_id
+            ? `${m.name} was unplugged. Recordings will use the Windows default microphone until it is reconnected.`
+            : `${m.name} was unplugged. Recordings will use the new Windows default microphone.`,
+      });
+    }
+  }
+
   async function refreshFiles() {
     [recent, freeBytes] = await Promise.all([api.recordings(50), api.storageFree()]);
   }
@@ -141,6 +180,8 @@
     win.onFocusChanged(({ payload }) => payload && refreshFiles()).then((u) => unlisten.push(u));
     // Real-time updates when files change in the recordings folder (see watcher.rs).
     api.onRecordingsChanged(() => refreshFiles()).then((u) => unlisten.push(u));
+    // Microphones plugged in or out (see state::watch_audio_devices).
+    api.onAudioDevicesChanged(() => refreshMics()).then((u) => unlisten.push(u));
 
     (async () => {
       const info = await api.uiInfo();

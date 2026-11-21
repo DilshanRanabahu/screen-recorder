@@ -303,6 +303,13 @@ The remaining cost is mostly WebView2 receiving and drawing frames (≈8%). Idea
 
 Peak levels are measured in the WASAPI capture threads. While idle, an `AudioMeter` opens the enabled devices only while the studio is visible (`set_monitoring`), and is closed before a recording opens them. The frontend polls `get_levels` every 100 ms, only when a source is enabled and the window isn't minimized.
 
+### Microphones (plug and play)
+
+- `recorder_core::watch_audio_devices` registers a Windows `IMMNotificationClient` (via `wasapi`) and reports device added/removed/state/default changes, batched for 300 ms. The app emits `audio-devices-changed`; the UI re-reads the list and the idle meter reopens so it follows the chosen or default microphone.
+- Dropdown: "Windows default · <name>", each microphone (the default one marked), and "Saved microphone (not connected)" while a remembered mic is unplugged.
+- A newly connected microphone shows a toast with **Use this microphone**. Unplugging the chosen mic shows a warning; during a recording the mic track stays silent for the rest of that recording.
+- A saved microphone is never forgotten because it is unplugged. If it is missing when recording starts, the Windows default mic is used and the recording shows a warning.
+
 ### State
 
 - The Rust core owns all recording state; the frontend mirrors it from the `recorder-state` event (`idle` / `starting` / `recording` / `stopping`) and the `view` event.

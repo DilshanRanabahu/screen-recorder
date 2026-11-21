@@ -22,7 +22,7 @@ The minimum needed to replace other recorders for daily work.
 
 ### Audio
 - [x] System audio (WASAPI loopback)
-- [x] Microphone, with device picker
+- [x] Microphone, with device picker; external mics (USB, headsets, Bluetooth) appear and disappear live as they are plugged in or out, with a "Use this microphone" prompt; a saved mic that is unplugged is kept and recordings fall back to the Windows default with a warning
 - [x] Separate tracks for system audio and microphone
 - [x] Live level meters during recording
 - [x] Level meters *before* recording (mic check)

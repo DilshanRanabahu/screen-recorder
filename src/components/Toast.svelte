@@ -5,6 +5,8 @@
     title: string;
     detail?: string;
     path?: string;
+    /** Optional button, e.g. "Use this microphone". */
+    action?: { label: string; run: () => void };
   }
 </script>
 
@@ -34,6 +36,20 @@
   <div class="min-w-0 flex-1">
     <p class="font-medium">{toast.title}</p>
     {#if toast.detail}<p class="mt-0.5 text-xs break-words text-muted">{toast.detail}</p>{/if}
+    {#if toast.action}
+      {@const action = toast.action}
+      <div class="mt-2 flex gap-2">
+        <button
+          class="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-[#0b0d12] hover:brightness-110"
+          onclick={() => {
+            action.run();
+            dismiss();
+          }}
+        >
+          {action.label}
+        </button>
+      </div>
+    {/if}
     {#if toast.path}
       {@const path = toast.path}
       <div class="mt-2 flex gap-2">

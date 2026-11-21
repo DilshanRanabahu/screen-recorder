@@ -96,6 +96,8 @@ pub struct AppState {
     preview: Mutex<Option<ActivePreview>>,
     /// Source of preview session ids.
     next_preview_id: AtomicU32,
+    /// Listens for microphones being plugged in or out (kept alive here).
+    device_watcher: Mutex<Option<recorder_core::AudioDeviceWatcher>>,
 }
 
 /// The running preview and what identifies it.
@@ -165,7 +167,7 @@ impl AppState {
     }
 
     /// (Re)opens the meter devices to match the selection, or closes them.
-    fn refresh_meter(&self) {
+    pub fn refresh_meter(&self) {
         let mut meter = self.meter.lock().unwrap();
         *meter = None; // close devices first
         let idle = self.recorder.lock().unwrap().is_none();
@@ -514,4 +516,20 @@ pub fn quit(app: &AppHandle) {
         }
     }
     app.exit(0);
+}
+
+/// Starts listening for audio devices being plugged in or out. On a change
+/// the UI re-reads the microphone list (`audio-devices-changed`), and the idle
+/// level meter is reopened so it follows the chosen or default microphone.
+pub fn watch_audio_devices(app: &AppHandle) {
+    let handle = app.clone();
+    match recorder_core::watch_audio_devices(move || {
+        if let Err(e) = handle.emit("audio-devices-changed", ()) {
+            tracing::debug!(error = %e, "failed to emit audio-devices-changed");
+        }
+        handle.state::<AppState>().refresh_meter();
+    }) {
+        Ok(watcher) => *app.state::<AppState>().device_watcher.lock().unwrap() = Some(watcher),
+        Err(e) => tracing::warn!(error = %e, "audio device notifications unavailable; the mic list updates only on restart"),
+    }
 }

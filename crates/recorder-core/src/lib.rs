@@ -30,7 +30,7 @@ mod writer;
 
 pub use writer::warm_up_encoder;
 
-pub use audio::{AudioConfig, AudioDevice, AudioMeter, AudioTrack, list_microphones};
+pub use audio::{AudioConfig, AudioDevice, AudioDeviceWatcher, AudioMeter, AudioTrack, list_microphones, watch_audio_devices};
 pub use display::{Display, free_space, list_displays};
 pub use error::RecorderError;
 pub use preview::{PreviewEncoding, PreviewFrame, PreviewSession};

@@ -76,6 +76,8 @@ fn main() {
             // Keep "Recent recordings" in sync with the folder, even for changes
             // made in Explorer.
             watcher::spawn(handle.clone());
+            // Show microphones as they are plugged in or out.
+            state::watch_audio_devices(handle);
 
             // Load the hardware encoder now so the first recording starts quickly.
             let state = app.state::<AppState>();

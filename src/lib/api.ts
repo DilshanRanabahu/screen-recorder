@@ -109,6 +109,8 @@ export const api = {
     listen<RecorderState>("recorder-state", (e) => cb(e.payload)),
   onView: (cb: (v: View) => void): Promise<UnlistenFn> => listen<View>("view", (e) => cb(e.payload)),
   /** Fired (debounced) when files change in the recordings folder, from inside or outside the app. */
+  /** Fired when microphones are plugged in or out, or the Windows default changes. */
+  onAudioDevicesChanged: (cb: () => void): Promise<UnlistenFn> => listen("audio-devices-changed", () => cb()),
   onRecordingsChanged: (cb: () => void): Promise<UnlistenFn> => listen("recordings-changed", () => cb()),
 };
 

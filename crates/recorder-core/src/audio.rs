@@ -108,9 +108,10 @@ fn spawn_capture(
     device_id: Option<String>,
     stop: Arc<AtomicBool>,
     levels: Arc<Levels>,
-) -> Result<(JoinHandle<()>, Receiver<Vec<f32>>), RecorderError> {
+) -> Result<(JoinHandle<()>, Receiver<Vec<f32>>, Option<String>), RecorderError> {
     let (tx, rx) = mpsc::sync_channel::<Vec<f32>>(256);
-    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+    // Ok(Some(note)) = started, with something the user should know.
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<Option<String>, String>>();
 
     let handle = std::thread::Builder::new()
         .name(format!("audio-{track:?}").to_lowercase())
@@ -125,7 +126,7 @@ fn spawn_capture(
         .map_err(|e| RecorderError::Audio(e.to_string()))?;
 
     match ready_rx.recv_timeout(Duration::from_secs(5)) {
-        Ok(Ok(())) => Ok((handle, rx)),
+        Ok(Ok(note)) => Ok((handle, rx, note)),
         Ok(Err(e)) => Err(RecorderError::Audio(e)),
         Err(_) => Err(RecorderError::Audio(format!("{track:?} audio did not start in time"))),
     }
@@ -137,19 +138,32 @@ fn capture_loop(
     stop: &AtomicBool,
     levels: &Levels,
     tx: &SyncSender<Vec<f32>>,
-    ready: &mpsc::Sender<Result<(), String>>,
+    ready: &mpsc::Sender<Result<Option<String>, String>>,
 ) -> Result<(), String> {
     let s = |e: wasapi::WasapiError| e.to_string();
     let _ = wasapi::initialize_mta();
     let _mmcss = crate::system::MmcssGuard::register("Pro Audio");
     let enumerator = DeviceEnumerator::new().map_err(s)?;
+    let mut note = None;
     let device = match (track, &device_id) {
         // Loopback: capture from the default *output* device.
-        (AudioTrack::System, _) => enumerator.get_default_device(Direction::Render),
-        (AudioTrack::Microphone, Some(id)) => enumerator.get_device(id),
-        (AudioTrack::Microphone, None) => enumerator.get_default_device(Direction::Capture),
-    }
-    .map_err(s)?;
+        (AudioTrack::System, _) => enumerator.get_default_device(Direction::Render).map_err(s)?,
+        // The chosen microphone, if it is plugged in and enabled; otherwise
+        // fall back to Windows' default microphone rather than recording none.
+        (AudioTrack::Microphone, Some(id)) => match enumerator
+            .get_device(id)
+            .ok()
+            .filter(|d| matches!(d.get_state(), Ok(wasapi::DeviceState::Active)))
+        {
+            Some(device) => device,
+            None => {
+                warn!("selected microphone is not connected; using the Windows default");
+                note = Some("The selected microphone isn't connected, so the Windows default microphone was used.".to_string());
+                enumerator.get_default_device(Direction::Capture).map_err(s)?
+            }
+        },
+        (AudioTrack::Microphone, None) => enumerator.get_default_device(Direction::Capture).map_err(s)?,
+    };
     let name = device.get_friendlyname().unwrap_or_default();
 
     let mut client = device.get_iaudioclient().map_err(s)?;
@@ -162,7 +176,7 @@ fn capture_loop(
     client.start_stream().map_err(s)?;
 
     info!(?track, device = %name, "audio capture started");
-    let _ = ready.send(Ok(()));
+    let _ = ready.send(Ok(note));
 
     let mut bytes: VecDeque<u8> = VecDeque::with_capacity(64 * 1024);
     while !stop.load(Ordering::Relaxed) {
@@ -258,7 +272,10 @@ impl AudioPipeline {
                 continue;
             }
             match spawn_capture(track, id, Arc::clone(&stop), Arc::clone(&levels)) {
-                Ok((handle, rx)) => {
+                Ok((handle, rx, note)) => {
+                    if let Some(note) = note {
+                        warnings.push(note);
+                    }
                     threads.push(handle);
                     sources.push(Source { track, rx, buf: VecDeque::new() });
                 }
@@ -393,5 +410,93 @@ impl AudioMeter {
 
     pub fn warnings(&self) -> &[String] {
         &self.pipeline.warnings
+    }
+}
+
+/// Calls back when audio devices change: a microphone or headset is plugged
+/// in or out, enabled or disabled, or Windows' default device changes.
+/// Dropping it stops listening.
+pub struct AudioDeviceWatcher {
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+/// Starts listening for audio device changes (Windows `IMMNotificationClient`).
+/// One device change often fires several notifications, so `on_change` runs
+/// once things have been quiet for 300 ms.
+pub fn watch_audio_devices(on_change: impl Fn() + Send + 'static) -> Result<AudioDeviceWatcher, RecorderError> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+
+    let thread = std::thread::Builder::new()
+        .name("audio-devices".into())
+        .spawn(move || {
+            let _ = wasapi::initialize_mta();
+            let (tx, rx) = mpsc::channel::<()>();
+            let registration = (|| {
+                let enumerator = DeviceEnumerator::new().map_err(|e| e.to_string())?;
+                let mut callbacks = wasapi::DeviceEventCallbacks::new();
+                let t = tx.clone();
+                callbacks.set_device_added_callback(move |_| {
+                    let _ = t.send(());
+                });
+                let t = tx.clone();
+                callbacks.set_device_removed_callback(move |_| {
+                    let _ = t.send(());
+                });
+                let t = tx.clone();
+                callbacks.set_device_state_callback(move |_, _| {
+                    let _ = t.send(());
+                });
+                let t = tx.clone();
+                callbacks.set_default_device_callback(move |_, _, _| {
+                    let _ = t.send(());
+                });
+                // The registration must outlive the loop below.
+                let registration = enumerator.register_notification_callback(callbacks).map_err(|e| e.to_string())?;
+                Ok::<_, String>((enumerator, registration))
+            })();
+            let _keep = match registration {
+                Ok(r) => {
+                    let _ = ready_tx.send(Ok(()));
+                    r
+                }
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e));
+                    return;
+                }
+            };
+            info!("watching audio devices");
+
+            let quiet = Duration::from_millis(300);
+            while !thread_stop.load(Ordering::Relaxed) {
+                if rx.recv_timeout(Duration::from_millis(250)).is_err() {
+                    continue;
+                }
+                // Let a burst of notifications settle, then report once.
+                while rx.recv_timeout(quiet).is_ok() {}
+                if thread_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                debug!("audio devices changed");
+                on_change();
+            }
+        })
+        .map_err(|e| RecorderError::Audio(e.to_string()))?;
+
+    match ready_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(Ok(())) => Ok(AudioDeviceWatcher { stop, thread: Some(thread) }),
+        Ok(Err(e)) => Err(RecorderError::Audio(format!("device notifications: {e}"))),
+        Err(_) => Err(RecorderError::Audio("device notifications did not start".into())),
+    }
+}
+
+impl Drop for AudioDeviceWatcher {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
     }
 }

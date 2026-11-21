@@ -69,18 +69,20 @@ pub fn save(path: &Path, settings: &Settings) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
-/// Fixes choices that no longer match the hardware, e.g. a monitor or
-/// microphone that was unplugged since the settings were saved.
+/// Fixes choices that no longer match the hardware: a monitor that was
+/// unplugged falls back to display 1. A missing microphone is kept (see below).
 pub fn validate(selection: &mut Selection, display_count: usize, mic_ids: &[String]) {
     if selection.display == 0 || selection.display > display_count.max(1) {
         tracing::info!(saved = selection.display, "saved display not found; using display 1");
         selection.display = 1;
     }
+    // A saved microphone that is unplugged right now is kept: it is used again
+    // as soon as it is reconnected, and until then recordings fall back to the
+    // Windows default (with a warning) and the UI shows it as "not connected".
     if let Some(id) = &selection.microphone_id
         && !mic_ids.contains(id)
     {
-        tracing::info!("saved microphone not found; using the Windows default");
-        selection.microphone_id = None;
+        tracing::info!("saved microphone is not connected; keeping it for when it comes back");
     }
 }
 
@@ -147,7 +149,8 @@ mod tests {
         let mut sel = Selection { display: 3, microphone_id: Some("gone".into()), ..Selection::default() };
         validate(&mut sel, 2, &["present".to_string()]);
         assert_eq!(sel.display, 1);
-        assert_eq!(sel.microphone_id, None);
+        // Kept, so the microphone is used again once it is plugged back in.
+        assert_eq!(sel.microphone_id.as_deref(), Some("gone"));
 
         let mut ok = Selection { display: 2, microphone_id: Some("present".into()), ..Selection::default() };
         validate(&mut ok, 2, &["present".to_string()]);
