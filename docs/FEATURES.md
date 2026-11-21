@@ -7,6 +7,7 @@
 - [x] Tray icon and global hotkey (Ctrl+Alt+R), wired to real start/stop recording
 - [x] `tracing` logging to `%APPDATA%\ScreenRecorder\logs`
 - [x] Engine smoke test: record 5 seconds of the primary monitor to MP4 from a CLI example (`cargo run --example record`)
+- [x] Release build and NSIS installer (`npm run tauri build`, 2.4 MB)
 - [ ] CI: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, frontend build
 
 ## Phase 1: MVP
@@ -46,7 +47,7 @@ The minimum needed to replace other recorders for daily work.
 - [x] Crash-safe recording (fragmented MP4, written directly; no remux needed)
 - [x] Automatic file naming: `Recording_2026-11-20_14-32-05.mp4`
 - [ ] Configurable output folder (fixed to `Videos\Recordings` for now; "Open folder" works)
-- [ ] Settings saved between app restarts
+- [x] Choices saved between app restarts (display, quality, audio, mic) in `%APPDATA%\ScreenRecorder\settings.json`
 
 ## Phase 2: Productivity
 

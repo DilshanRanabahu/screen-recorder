@@ -2,6 +2,7 @@
 //! tray, hotkeys) reads it from here and is told about changes through the
 //! `recorder-state` event, so they never disagree.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,8 +16,10 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalP
 
 use crate::tray;
 
-/// What the user picked in the launcher. Used by the hotkey too.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// What the user picked in the studio. Used by the hotkey too, and saved
+/// between runs (see `settings.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Selection {
     pub display: usize,
     pub preset: QualityPreset,
@@ -67,6 +70,8 @@ pub enum View {
 
 #[derive(Default)]
 pub struct AppState {
+    /// Where settings are saved; `None` if there is no config folder.
+    settings_path: Option<PathBuf>,
     recorder: Mutex<Option<Recorder>>,
     ui: Mutex<Option<UiState>>,
     selection: Mutex<Selection>,
@@ -83,6 +88,11 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Starts with saved choices; later changes are written to `settings_path`.
+    pub fn new(settings_path: Option<PathBuf>, selection: Selection) -> Self {
+        Self { settings_path, selection: Mutex::new(selection), ..Default::default() }
+    }
+
     pub fn ui(&self) -> UiState {
         self.ui.lock().unwrap().clone().unwrap_or(UiState::Idle { last: None, error: None })
     }
@@ -92,7 +102,21 @@ impl AppState {
     }
 
     pub fn set_selection(&self, selection: Selection) {
-        *self.selection.lock().unwrap() = selection;
+        let changed = {
+            let mut current = self.selection.lock().unwrap();
+            let changed = *current != selection;
+            *current = selection.clone();
+            changed
+        };
+        if !changed {
+            return;
+        }
+        if let Some(path) = &self.settings_path {
+            let settings = crate::settings::Settings { selection, ..Default::default() };
+            if let Err(e) = crate::settings::save(path, &settings) {
+                tracing::warn!(error = %e, "failed to save settings");
+            }
+        }
         self.refresh_meter();
     }
 

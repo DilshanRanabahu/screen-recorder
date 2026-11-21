@@ -91,8 +91,8 @@ export const api = {
    * Streams preview frames of a display; call `previewAck` after drawing each one.
    * Each message: `[encoding u8: 0 = JPEG, 1 = RGBA][width u32 LE][height u32 LE][data…]`.
    */
-  startPreview(display: number, maxWidth: number, fps: number, raw: boolean, onFrame: (msg: ArrayBuffer) => void) {
-    const channel = new Channel<ArrayBuffer>();
+  startPreview(display: number, maxWidth: number, fps: number, raw: boolean, onFrame: (msg: unknown) => void) {
+    const channel = new Channel<unknown>();
     channel.onmessage = onFrame;
     return invoke<void>("start_preview", { display, maxWidth, fps, raw, channel });
   },

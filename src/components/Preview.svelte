@@ -42,9 +42,12 @@
     }, 1000);
 
     api
-      .startPreview(index, MAX_WIDTH, rate, RAW_FRAMES, async (msg) => {
+      .startPreview(index, MAX_WIDTH, rate, RAW_FRAMES, async (incoming: unknown) => {
         try {
           if (stopped || !ctx) return;
+          // Normally an ArrayBuffer. If the fast binary IPC is unavailable,
+          // Tauri falls back to JSON and delivers a number array instead.
+          const msg = toArrayBuffer(incoming);
           const head = new DataView(msg, 0, 9);
           const raw = head.getUint8(0) === 1;
           const width = head.getUint32(1, true);
@@ -61,7 +64,12 @@
             bitmap.close();
           }
           hasFrame = true;
+          failed = null;
           frames++;
+        } catch (e) {
+          // Show the problem instead of staying on "Starting preview…".
+          if (!hasFrame) failed = `could not draw frame (${String(e)})`;
+          console.error("preview frame failed", e);
         } finally {
           api.previewAck();
         }
@@ -83,6 +91,16 @@
   $effect(() => {
     api.setPreviewFps(targetFps);
   });
+
+  /** Accepts the shapes Tauri may deliver binary channel data in. */
+  function toArrayBuffer(data: unknown): ArrayBuffer {
+    if (data instanceof ArrayBuffer) return data;
+    if (ArrayBuffer.isView(data)) {
+      return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+    }
+    if (Array.isArray(data)) return new Uint8Array(data).buffer;
+    throw new Error(`unexpected preview data (${typeof data})`);
+  }
 
   const aspect = $derived(display && display.height ? display.width / display.height : 16 / 9);
 </script>

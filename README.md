@@ -47,15 +47,27 @@ What works:
 - **Studio UI** (dark, OBS-style layout): smooth GPU-scaled live preview (up to 30 fps), audio mixer with dB meters (also before recording), quality cards, recent recordings, disk space and GB/hour estimate, toasts
 - Compact always-on-top **pill** while recording; the app's windows never appear in recordings
 - Tray icon (grey idle, red recording, amber paused) and **Ctrl+Alt+R** start/stop
+- Choices (display, quality, audio, mic) remembered in `%APPDATA%\ScreenRecorder\settings.json`
 - Logs in `%APPDATA%\ScreenRecorder\logs`; recordings in `Videos\Recordings`
 
-Still to do in Phase 1 (see [docs/FEATURES.md](docs/FEATURES.md)): window and region capture, settings window and saved preferences, countdown. UI details: [docs/UI-DESIGN.md](docs/UI-DESIGN.md). Known issues are listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#known-issues).
+Still to do in Phase 1 (see [docs/FEATURES.md](docs/FEATURES.md)): window and region capture, settings window (output folder, hotkeys), countdown. UI details: [docs/UI-DESIGN.md](docs/UI-DESIGN.md). Known issues are listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#known-issues).
+
+## Install
+
+Build the installer (about 8 minutes on the dev laptop) and run it:
+
+```powershell
+npm run tauri build
+& ".\target\release\bundle\nsis\Screen Recorder_0.1.0_x64-setup.exe"
+```
+
+The installer is about 2.4 MB and installs per user (no admin rights needed). Uninstall from *Settings → Apps*. The installer is not code-signed yet, so Windows SmartScreen may warn on first run ("More info" → "Run anyway").
 
 ## Project layout
 
 ```
 crates/recorder-core/   Recording engine (no UI). examples/record.rs = CLI smoke test
-src-tauri/              Tauri app: commands, state, tray, hotkey, logging
+src-tauri/              Tauri app: commands, state, settings, tray, hotkeys, logging
 src/                    Svelte frontend (App.svelte, components/, lib/api.ts, app.css)
 docs/                   Design docs
 ```

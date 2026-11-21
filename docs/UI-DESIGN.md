@@ -282,6 +282,7 @@ encoder thread:  newest frame → JPEG q72 via Windows Imaging Component  (≈3.
 - **Encoder:** WIC (built into Windows) by default; the pure-Rust `jpeg-encoder` is the fallback (`SR_PREVIEW_JPEG=rust` forces it).
 - **Message format:** `[encoding u8: 0 = JPEG, 1 = RGBA][width u32 LE][height u32 LE][data]`.
 - The app's own window is `WDA_EXCLUDEFROMCAPTURE`, so it never appears in the preview.
+- **CSP must allow Tauri IPC** (`connect-src 'self' ipc: http://ipc.localhost` in `tauri.conf.json`). Without it, installed builds silently fall back to JSON IPC and binary frames arrive as number arrays. The first installer hit this: the preview stayed on "Starting preview…" while the dev build (which has no CSP) worked. The preview now accepts both shapes and shows an error instead of waiting forever.
 
 Measured on the dev laptop (whole app incl. WebView2, screen changing constantly):
 
@@ -291,6 +292,7 @@ Measured on the dev laptop (whole app incl. WebView2, screen changing constantly
 | v2.1: raw RGBA over IPC (2 MB/frame) | 27 fps | none | 20.0% |
 | v2.1: Rust JPEG on the capture thread | 30 fps focused / 15 fps background | ≈10 ms (up to 28 ms under load) | 13.7% / 7.8% |
 | **v2.2: WIC JPEG on its own thread (current)** | **30 fps, focused or not** | **≈3.5 ms** | **12.4%** |
+| v2.2, **release build** (installed app) | 29 fps | ≈2.7 ms | **7.8%** |
 
 Why v2.1 still felt laggy: it dropped to 15 fps whenever another window had focus, and the 10–28 ms JPEG encode ran on the capture thread, so the frame rate wobbled. v2.2 fixes both.
 

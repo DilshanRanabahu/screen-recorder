@@ -32,8 +32,10 @@ pub fn list_displays() -> Result<Vec<Display>, String> {
     recorder_core::list_displays().map_err(|e| e.to_string())
 }
 
+/// Async so it runs on a worker thread: WASAPI must not change the main
+/// (UI) thread's COM mode.
 #[tauri::command]
-pub fn list_microphones() -> Result<Vec<AudioDevice>, String> {
+pub async fn list_microphones() -> Result<Vec<AudioDevice>, String> {
     recorder_core::list_microphones().map_err(|e| e.to_string())
 }
 

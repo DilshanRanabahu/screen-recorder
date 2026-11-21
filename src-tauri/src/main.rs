@@ -3,6 +3,7 @@
 
 mod commands;
 mod logging;
+mod settings;
 mod state;
 mod tray;
 
@@ -28,7 +29,7 @@ fn main() {
             state::show_main(app);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .manage(AppState::default())
+        .manage(load_state())
         .invoke_handler(tauri::generate_handler![
             commands::ui_info,
             commands::list_displays,
@@ -94,4 +95,26 @@ fn main() {
     if let Err(e) = result {
         tracing::error!(error = %e, "app failed");
     }
+}
+
+/// Builds the app state from saved settings, fixing any choice that no longer
+/// matches the hardware (unplugged monitor or microphone).
+fn load_state() -> AppState {
+    let path = settings::default_path();
+    let mut saved = path.as_deref().map(settings::load).unwrap_or_default();
+    // Enumerate hardware on a helper thread: WASAPI puts its thread into the
+    // multithreaded COM mode, but the main thread must stay single-threaded
+    // for the window (OLE drag and drop), or startup panics.
+    let (displays, mics) = std::thread::spawn(|| {
+        let displays = recorder_core::list_displays().map(|d| d.len()).unwrap_or(1);
+        let mics: Vec<String> = recorder_core::list_microphones()
+            .map(|m| m.into_iter().map(|d| d.id).collect())
+            .unwrap_or_default();
+        (displays, mics)
+    })
+    .join()
+    .unwrap_or((1, Vec::new()));
+    settings::validate(&mut saved.selection, displays, &mics);
+    tracing::info!(selection = ?saved.selection, "settings loaded");
+    AppState::new(path, saved.selection)
 }
