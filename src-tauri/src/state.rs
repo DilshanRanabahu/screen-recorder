@@ -27,11 +27,20 @@ pub struct Selection {
     pub microphone: bool,
     /// `None` = Windows' default microphone.
     pub microphone_id: Option<String>,
+    /// Live preview in the studio (off saves CPU; recording is unaffected).
+    pub preview: bool,
 }
 
 impl Default for Selection {
     fn default() -> Self {
-        Self { display: 1, preset: QualityPreset::High, system_audio: true, microphone: false, microphone_id: None }
+        Self {
+            display: 1,
+            preset: QualityPreset::High,
+            system_audio: true,
+            microphone: false,
+            microphone_id: None,
+            preview: true,
+        }
     }
 }
 
@@ -81,6 +90,8 @@ pub struct AppState {
     /// Level meters while idle (mic check). Closed while recording.
     meter: Mutex<Option<AudioMeter>>,
     monitoring: AtomicBool,
+    /// Codecs whose hardware encoder has been warmed up (see `warm_up_encoder`).
+    warmed: Arc<Mutex<Vec<recorder_core::Codec>>>,
     /// Live preview stream (GPU capture → small JPEGs → UI).
     preview: Mutex<Option<PreviewSession>>,
     /// Preview frames sent but not yet drawn by the UI.
@@ -111,6 +122,7 @@ impl AppState {
         if !changed {
             return;
         }
+        self.warm_up_encoder(selection.preset.codec());
         if let Some(path) = &self.settings_path {
             let settings = crate::settings::Settings { selection, ..Default::default() };
             if let Err(e) = crate::settings::save(path, &settings) {
@@ -153,6 +165,27 @@ impl AppState {
             Ok(m) => *meter = Some(m),
             Err(e) => tracing::warn!(error = %e, "failed to start level meters"),
         }
+    }
+
+    /// Initializes the hardware encoder for `codec` on a background thread, once
+    /// per codec. The first recording in a process otherwise takes 1.7–3.9 s to
+    /// start instead of about 0.3 s.
+    pub fn warm_up_encoder(&self, codec: recorder_core::Codec) {
+        {
+            let mut warmed = self.warmed.lock().unwrap();
+            if warmed.contains(&codec) {
+                return;
+            }
+            warmed.push(codec);
+        }
+        let warmed = Arc::clone(&self.warmed);
+        std::thread::spawn(move || match recorder_core::warm_up_encoder(codec) {
+            Ok(took) => tracing::info!(?codec, ms = took.as_millis() as u64, "encoder warmed up"),
+            Err(e) => {
+                tracing::warn!(?codec, error = %e, "encoder warm-up failed");
+                warmed.lock().unwrap().retain(|c| *c != codec);
+            }
+        });
     }
 
     fn close_meter(&self) {

@@ -26,7 +26,15 @@
   let mics = $state<AudioDevice[]>([]);
   let recent = $state<RecordingFile[]>([]);
   let freeBytes = $state<number | null>(null);
-  let selection = $state<Selection>({ display: 1, preset: "high", system_audio: true, microphone: false, microphone_id: null });
+  let selection = $state<Selection>({
+    display: 1,
+    preset: "high",
+    system_audio: true,
+    microphone: false,
+    microphone_id: null,
+    preview: true,
+  });
+  let onBattery = $state(false);
   let hotkey = $state("Ctrl+Alt+R");
   let pauseHotkey = $state("Ctrl+Alt+P");
   let now = $state(Date.now());
@@ -104,7 +112,12 @@
 
   onMount(() => {
     const unlisten: (() => void)[] = [];
-    const storage = setInterval(() => api.storageFree().then((b) => (freeBytes = b)), 30_000);
+    const refreshPower = () => api.onBattery().then((b) => (onBattery = b)).catch(() => {});
+    refreshPower();
+    const storage = setInterval(() => {
+      api.storageFree().then((b) => (freeBytes = b));
+      refreshPower();
+    }, 30_000);
     document.addEventListener("visibilitychange", syncMonitoring);
 
     // WebView2 doesn't always hide the page when minimized, so watch the window.
@@ -166,7 +179,15 @@
     <TitleBar {rec} {elapsed} />
     <div class="flex min-h-0 flex-1 gap-3 p-3">
       <section class="flex min-w-0 flex-1 flex-col gap-3">
-        <Preview {display} {rec} {elapsed} {active} />
+        <Preview
+          {display}
+          {rec}
+          {elapsed}
+          {active}
+          {onBattery}
+          enabled={selection.preview}
+          setEnabled={(on) => update({ preview: on })}
+        />
         <Mixer {selection} {mics} {levels} {rec} {update} />
       </section>
       <SidePanel {selection} {displays} {recent} {rec} {update} />

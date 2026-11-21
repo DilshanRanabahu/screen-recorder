@@ -76,3 +76,43 @@ Track these during test recordings:
 | CPU usage | < 5% |
 | A/V offset after 60 min | < 40 ms |
 | Start-recording latency | < 300 ms after hotkey |
+
+## Optimization review (November 2026)
+
+Measured on the dev laptop (i5-10210U, Intel UHD, release build, whole app incl. WebView2).
+
+### Baseline before this round
+
+| Situation | CPU | Notes |
+|---|---|---|
+| Recording 1080p60, screen moving | 2.2% | GPU does capture, conversion and encoding; 0 dropped frames |
+| Studio open, screen still | 3.6% | |
+| Studio open, screen moving (preview 30 fps) | 10.3% | The most expensive state |
+| Press record → recording starts | 1.0 s (up to 3.4 s for the first recording) | Above the < 300 ms target |
+
+### Done
+
+| Change | Result |
+|---|---|
+| **Encoder warm-up at launch** (`warm_up_encoder`): a throwaway writer is built on a background thread at startup, and again the first time another codec is selected | First start 1.7–3.9 s → **≈0.55 s** in the app (≈0.27 s without the preview running) |
+| **Live preview on/off** (saved in settings) and **15 fps on battery** | Preview off: 10.3% → **2.1%** with the screen moving |
+| **MMCSS priority** for the video pacer ("Capture") and audio threads ("Pro Audio") | Keeps frame and audio timing steady when the PC is busy; no CPU change |
+
+`cargo run --release -p recorder-core --example start_latency [--warm]` measures start latency.
+
+### Still worth doing
+
+| Change | Why |
+|---|---|
+| **Quality-based rate control** instead of a fixed bitrate (16 Mbps ≈ 7.4 GB/h at 1080p60) | Screen content is mostly static; constant-quality encoding is often 2–4× smaller at the same sharpness. Needs testing that QuickSync honours the mode |
+| Preview frame size matched to the on-screen preview size (480 px when the window is small) | Roughly halves preview cost for small windows |
+
+### Deliberately not doing (over-optimization)
+
+| Idea | Why not |
+|---|---|
+| More tuning of the recording path | Already ≈2% CPU with 0 dropped frames |
+| GPU JPEG or zero-copy (WebGPU) preview | Complex and fragile for ≈2% CPU |
+| Reducing WebView2 memory (≈730 MB working set) | Mostly the Edge runtime, partly shared; only fixable by dropping the web UI |
+| Native UI instead of WebView2 | Large rewrite; the UI is not the bottleneck |
+| Micro-tuning thread timings, buffer counts, log levels | No measurable user-visible gain |

@@ -63,7 +63,9 @@ impl Writer {
         video: &VideoFormat,
         audio_tracks: &[AudioTrack],
     ) -> Result<Self, RecorderError> {
+        let t0 = std::time::Instant::now();
         mf_startup()?;
+        let t_startup = t0.elapsed();
         unsafe {
             // The capture thread and Media Foundation share this device.
             let _ = device
@@ -88,8 +90,10 @@ impl Writer {
                 .SetGUID(&MF_TRANSCODE_CONTAINERTYPE, &MFTranscodeContainerType_FMPEG4)
                 .map_err(err("container"))?;
 
+            let t_dev = t0.elapsed();
             let writer = MFCreateSinkWriterFromURL(&HSTRING::from(path.as_os_str()), None, &attrs)
                 .map_err(err("create sink writer"))?;
+            let t_sink = t0.elapsed();
 
             let video_stream = Self::add_video(&writer, video)?;
             let mut audio_streams = Vec::new();
@@ -97,7 +101,16 @@ impl Writer {
                 audio_streams.push((track, Self::add_audio(&writer)?));
             }
 
+            let t_streams = t0.elapsed();
             writer.BeginWriting().map_err(err("begin writing"))?;
+            tracing::debug!(
+                mf_startup_ms = t_startup.as_millis() as u64,
+                device_ms = (t_dev - t_startup).as_millis() as u64,
+                sink_writer_ms = (t_sink - t_dev).as_millis() as u64,
+                streams_ms = (t_streams - t_sink).as_millis() as u64,
+                begin_ms = (t0.elapsed() - t_streams).as_millis() as u64,
+                "writer setup timing"
+            );
             Ok(Self { writer, video_stream, audio_streams, _device_manager: manager })
         }
     }
@@ -209,4 +222,48 @@ impl Writer {
     pub fn finalize(self) -> Result<(), RecorderError> {
         unsafe { self.writer.Finalize() }.map_err(err("finalize"))
     }
+}
+
+/// Loads and initializes the hardware encoder once, so the first real
+/// recording starts as fast as later ones.
+///
+/// Measured on the dev laptop: the first `Recorder::start` in a process took
+/// 1.7–3.9 s (Media Foundation and the GPU driver loading the encoder), later
+/// ones about 0.6 s. Call this on a background thread at app start; it builds
+/// a throwaway writer with the given codec and deletes it.
+pub fn warm_up_encoder(codec: Codec) -> Result<std::time::Duration, RecorderError> {
+    use windows::Win32::Foundation::HMODULE;
+    use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice,
+    };
+    use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
+
+    let started = std::time::Instant::now();
+    let path = std::env::temp_dir().join(format!("screen-recorder-warmup-{}.mp4", std::process::id()));
+    let result = (|| {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let mut device = None;
+            D3D11CreateDevice(
+                None,
+                D3D_DRIVER_TYPE_HARDWARE,
+                HMODULE::default(),
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                None,
+                D3D11_SDK_VERSION,
+                Some(&mut device),
+                None,
+                None,
+            )
+            .map_err(err("warm-up device"))?;
+            let device = device.ok_or_else(|| RecorderError::Encoder("no warm-up device".into()))?;
+            let format = VideoFormat { width: 1920, height: 1080, fps: 60, bitrate: 16_000_000, codec };
+            // Dropped without samples or Finalize: only the setup cost matters.
+            drop(Writer::create(&path, &device, &format, &[AudioTrack::System])?);
+            Ok(())
+        }
+    })();
+    let _ = std::fs::remove_file(&path);
+    result.map(|()| started.elapsed())
 }

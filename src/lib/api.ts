@@ -57,6 +57,8 @@ export interface Selection {
   system_audio: boolean;
   microphone: boolean;
   microphone_id: string | null;
+  /** Live preview in the studio (off saves CPU). */
+  preview: boolean;
 }
 
 export interface UiInfo {
@@ -73,6 +75,7 @@ export const api = {
   setMonitoring: (on: boolean) => invoke<void>("set_monitoring", { on }),
   recordings: (limit: number) => invoke<RecordingFile[]>("list_recordings", { limit }),
   storageFree: () => invoke<number | null>("storage_free"),
+  onBattery: () => invoke<boolean>("on_battery"),
   state: () => invoke<RecorderState>("get_state"),
   selection: () => invoke<Selection>("get_selection"),
   setSelection: (selection: Selection) => invoke<void>("set_selection", { selection }),

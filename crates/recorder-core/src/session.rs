@@ -16,7 +16,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11DeviceContext};
 use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
 use windows_capture::frame::Frame;
@@ -200,6 +200,7 @@ impl Recorder {
             microphone: options.microphone,
             microphone_id: options.microphone_id.clone(),
         };
+        let t_begin = Instant::now();
         let audio_writer = Arc::clone(&shared.writer);
         let audio = AudioPipeline::start(&audio_config, Arc::clone(&shared.clock), move |track, pcm, time| {
             let mut guard = audio_writer.lock().unwrap();
@@ -214,6 +215,7 @@ impl Recorder {
             }
         })?;
         let tracks = audio.tracks().to_vec();
+        let t_audio = t_begin.elapsed();
         let warnings = audio.warnings.clone();
 
         let fps = options.preset.fps();
@@ -286,6 +288,11 @@ impl Recorder {
             }
         }
 
+        debug!(
+            audio_ms = t_audio.as_millis() as u64,
+            total_ms = t_begin.elapsed().as_millis() as u64,
+            "start timing"
+        );
         info!(
             display = options.display,
             preset = ?options.preset,

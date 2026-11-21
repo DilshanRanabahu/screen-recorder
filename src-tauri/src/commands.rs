@@ -115,6 +115,12 @@ pub fn list_recordings(limit: usize) -> Vec<RecordingFile> {
     files
 }
 
+/// True when the laptop runs on battery (the preview then uses a lower rate).
+#[tauri::command]
+pub fn on_battery() -> bool {
+    recorder_core::on_battery()
+}
+
 /// Free space on the recordings drive, in bytes.
 #[tauri::command]
 pub fn storage_free() -> Option<u64> {

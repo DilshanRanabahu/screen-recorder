@@ -106,6 +106,8 @@ pub fn spawn_pacer(
 ) -> std::io::Result<JoinHandle<()>> {
     std::thread::Builder::new().name("video-pacer".into()).spawn(move || {
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        // Keep frame pacing on time when the PC is busy.
+        let _mmcss = crate::system::MmcssGuard::register("Capture");
         let frame_100ns = 10_000_000 / i64::from(fps);
         let mut next_tick: u64 = 0;
 

@@ -141,6 +141,7 @@ fn capture_loop(
 ) -> Result<(), String> {
     let s = |e: wasapi::WasapiError| e.to_string();
     let _ = wasapi::initialize_mta();
+    let _mmcss = crate::system::MmcssGuard::register("Pro Audio");
     let enumerator = DeviceEnumerator::new().map_err(s)?;
     let device = match (track, &device_id) {
         // Loopback: capture from the default *output* device.
@@ -314,6 +315,7 @@ fn pace_loop(
     stop: &AtomicBool,
     mut sink: impl FnMut(AudioTrack, &[u8], i64) -> bool,
 ) {
+    let _mmcss = crate::system::MmcssGuard::register("Pro Audio");
     let mut produced: u64 = 0; // frames (one sample per channel), same for every track
     let mut out: Vec<u8> = Vec::new();
     let mut aligned = false;

@@ -8,13 +8,28 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { api, formatClock, type Display, type RecorderState } from "../lib/api";
+  import Icon from "./Icon.svelte";
 
   let {
     display,
     rec,
     elapsed,
     active = true,
-  }: { display: Display | undefined; rec: RecorderState; elapsed: number; active?: boolean } = $props();
+    onBattery = false,
+    enabled = true,
+    setEnabled,
+  }: {
+    display: Display | undefined;
+    rec: RecorderState;
+    elapsed: number;
+    /** False while minimized or hidden. */
+    active?: boolean;
+    /** Lower rate on battery. */
+    onBattery?: boolean;
+    /** The user's preview on/off switch. */
+    enabled?: boolean;
+    setEnabled: (on: boolean) => void;
+  } = $props();
 
   let canvas = $state<HTMLCanvasElement>();
   let hasFrame = $state(false);
@@ -29,7 +44,10 @@
   $effect(() => {
     const index = display?.index;
     const target = canvas;
-    if (!index || !target || !active) return;
+    if (!index || !target || !active || !enabled) {
+      hasFrame = false;
+      return;
+    }
     // Initial rate only; changes are applied live by the effect below.
     const rate = untrack(() => targetFps);
 
@@ -85,9 +103,9 @@
   });
 
   // Smooth whenever the studio is visible (focused or not: you may be working
-  // in another window while watching the preview). A bit lower while
-  // recording, to leave headroom for the encoder.
-  const targetFps = $derived(recordingNow ? 20 : 30);
+  // in another window while watching the preview). Lower on battery, and
+  // while recording to leave headroom for the encoder.
+  const targetFps = $derived(recordingNow ? 20 : onBattery ? 15 : 30);
   $effect(() => {
     api.setPreviewFps(targetFps);
   });
@@ -114,7 +132,16 @@
     {/if}
   </div>
 
-  {#if !hasFrame}
+  {#if !enabled}
+    <div class="absolute flex flex-col items-center gap-3 text-center">
+      <span class="grid size-12 place-items-center rounded-full bg-white/5 text-muted"><Icon name="eyeOff" size={22} /></span>
+      <div>
+        <p class="font-medium">Preview is off</p>
+        <p class="mt-0.5 text-xs text-faint">Saves CPU and battery. Recording works the same.</p>
+      </div>
+      <button class="rounded-lg border border-line-strong px-3 py-1.5 text-xs hover:bg-hover" onclick={() => setEnabled(true)}>Turn on preview</button>
+    </div>
+  {:else if !hasFrame}
     <p class="absolute text-muted">{failed ? `Preview unavailable: ${failed}` : "Starting preview…"}</p>
   {/if}
 
@@ -134,10 +161,19 @@
       Display {display.index} · {display.width}×{display.height} · {display.refresh_rate} Hz
     </span>
   {/if}
+  {#if enabled}
+    <button
+      class="absolute bottom-3 left-3 flex items-center gap-1.5 rounded-md bg-black/60 px-2 py-1 text-[11px] text-white/70 backdrop-blur hover:bg-black/80 hover:text-white"
+      title="Turn the live preview off to save CPU and battery (recording is unaffected)"
+      onclick={() => setEnabled(false)}
+    >
+      <Icon name="eyeOff" size={13} />Hide preview
+    </button>
+  {/if}
   {#if hasFrame}
     <!-- Frames only arrive when the screen changes, so a still screen reads 0 fps. -->
     <span class="pointer-events-none absolute right-3 bottom-3 rounded-md bg-black/60 px-2 py-1 font-mono text-[10px] text-white/60 backdrop-blur" title="Preview frames per second (the recording itself is always at the full frame rate)">
-      preview {fps} fps
+      preview {fps} fps{onBattery ? " · battery" : ""}
     </span>
   {/if}
 </div>

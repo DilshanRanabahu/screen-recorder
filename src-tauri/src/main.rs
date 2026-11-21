@@ -42,6 +42,7 @@ fn main() {
             commands::set_preview_fps,
             commands::list_recordings,
             commands::storage_free,
+            commands::on_battery,
             commands::get_state,
             commands::get_selection,
             commands::set_selection,
@@ -70,6 +71,10 @@ fn main() {
             }
 
             tray::create(handle)?;
+
+            // Load the hardware encoder now so the first recording starts quickly.
+            let state = app.state::<AppState>();
+            state.warm_up_encoder(state.selection().preset.codec());
 
             handle.global_shortcut().on_shortcut(HOTKEY, |app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
